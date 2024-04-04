@@ -9,7 +9,7 @@ import azure.cosmos.cosmos_client as cosmos_client
 import azure.cosmos.exceptions as exceptions
 from azure.cosmos.partition_key import PartitionKey
 import datetime
-
+CORS(app)
 app = Flask(__name__)
 
 # Define Azure Cosmos DB connection settings
@@ -184,5 +184,5 @@ def get_leaderboard():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0")
-    CORS(app)
+    
 
