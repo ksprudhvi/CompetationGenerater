@@ -3,6 +3,7 @@ import uuid
 from flask import Flask, request, jsonify
 from azure.cosmos import CosmosClient, exceptions
 import config
+from flask_cors import CORS
 import azure.cosmos.documents as documents
 import azure.cosmos.cosmos_client as cosmos_client
 import azure.cosmos.exceptions as exceptions
@@ -183,3 +184,5 @@ def get_leaderboard():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0")
+    CORS(app)
+
