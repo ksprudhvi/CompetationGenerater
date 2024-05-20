@@ -3,14 +3,14 @@ import uuid
 from flask import Flask, request, jsonify
 from azure.cosmos import CosmosClient, exceptions
 import config
-import azure.cosmos.documents as documents
-import azure.cosmos.cosmos_client as cosmos_client
+from flask_cors import CORS
 import azure.cosmos.exceptions as exceptions
-from azure.cosmos.partition_key import PartitionKey
-import datetime
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
+
+
 
 app = Flask(__name__)
-
+cors = CORS(app)
 # Define Azure Cosmos DB connection settings
 # Replace these placeholders with your actual Cosmos DB details
 COSMOS_ENDPOINT = config.settings['host']
@@ -21,6 +21,39 @@ DATABASE_NAME = config.settings['competitionDB']
 client = CosmosClient(COSMOS_ENDPOINT, credential=COSMOS_KEY)
 database = client.get_database_client(DATABASE_NAME)
 
+BlobConnection_string = "DefaultEndpointsProtocol=https;AccountName=scorecardgen;AccountKey=09fO4n7Nko8mjcAamRJzbXgbJBZAxmXC5/pkjn+m+0n1grVbnQVGMOh9kUMi1Oth4spfo2bZCD3l+AStpCbUgA==;EndpointSuffix=core.windows.net"
+BlobContainer_name = "titleimages"
+
+# Create a BlobServiceClient object
+blob_service_client = BlobServiceClient.from_connection_string(BlobConnection_string)
+container_client = blob_service_client.get_container_client(BlobContainer_name)
+
+# Function to upload image to Azure Blob Storage
+def upload_image(file):
+    blob_client = container_client.get_blob_client(file.filename)
+    blob_client.upload_blob(file)
+
+# Function to retrieve image from Azure Blob Storage
+def get_image(filename):
+    blob_client = container_client.get_blob_client(filename)
+    blob_data = blob_client.download_blob()
+    return blob_data.readall()
+
+@app.route('/upload', methods=['POST'])
+def upload():
+    if 'file' not in request.files:
+        return jsonify({'error': 'No file part'})
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'error': 'No selected file'})
+    upload_image(file)
+    return jsonify({'message': 'File uploaded successfully'})
+
+@app.route('/image/<filename>', methods=['GET'])
+def get_image_route(filename):
+    image_data = get_image(filename)
+    return image_data, 200, {'Content-Type': 'image/jpeg'}
+
 def generate_unique_id():
     return str(uuid.uuid4())
 # Write data to Azure Cosmos DB
@@ -28,26 +61,75 @@ def generate_unique_id():
 def create_competition():
     data = request.json
     data["id"]=generate_unique_id()
-    container = database.get_container_client("CompetitionsData")
-    for judge in data.get('judges', []):
-        judge['id'] = generate_unique_id()
-    venueLocation = data.get('venueLocation')
-    venueLocation['id'] = generate_unique_id()
-    for team in data.get('teams', []):
-        team['coachName']['id'] = generate_unique_id()
-        for member in team['teamMembers']:
-            member['id'] = generate_unique_id()
-        team['teamName']['id'] = generate_unique_id()
+
+    container = database.get_container_client("EventMeta")
     try:
         container.create_item(body=data)
-        add_scorecard(data)
-        return jsonify({"message": "Competition created successfully"}), 201
+        return jsonify({"eventId": data["EventId"]}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/updateTeams', methods=['POST'])
+def createTeams():
+    data = request.json
+    data["id"]=generate_unique_id()
+    container = database.get_container_client("EventTeamsJudges")
+    try:
+        container.create_item(body=data)
+        return jsonify({"eventId": data["EventId"]}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/getTeamsJudges/<EventId>', methods=['GET'])
+def getTeamsJudges(EventId):
+    try:
+        container = database.get_container_client("EventTeamsJudges")
+        query = "SELECT * FROM c WHERE c.EventId = @EventId"
+        # Define the parameters for the query
+        query_params = [
+            {"name": "@EventId", "value": EventId}
+        ]
+        # Execute the query
+        items = list(container.query_items(
+            query=query,
+            parameters=query_params,
+            enable_cross_partition_query=True
+        ))
+        return jsonify(items), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+
+@app.route('/updateJudges', methods=['POST'])
+def createJudges():
+    data = request.json
+    container = database.get_container_client("EventTeamsJudges")
+    query = "SELECT * FROM c WHERE c.EventId = @EventId"
+    # Define the parameters for the query
+    query_params = [
+        {"name": "@EventId", "value": data["EventId"]}
+    ]
+    # Execute the query
+    items = list(container.query_items(
+        query=query,
+        parameters=query_params,
+        enable_cross_partition_query=True
+    ))
+    dataTemp=items[0]
+    try:
+        dataTemp['JudegsInfo']=data['JudegsInfo']
+        updated_document = container.replace_item(item=dataTemp['id'], body=dataTemp)
+        add_scorecard(dataTemp)
+        return jsonify(updated_document), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/Updatecompetition', methods=['POST'])
 def update_competition():
     data = request.json
-    container = database.get_container_client("CompetitionsData")
+    container = database.get_container_client("EventMeta")
     try:
         # Replace the existing competition data with the updated one
         updated_document = container.replace_item(item=data["id"], body=data)
@@ -56,12 +138,26 @@ def update_competition():
         return jsonify({"error": str(e)}), 500
 
 # Fetch data from Azure Cosmos DB based on CompetitionId
-@app.route('/competition/<competition_id>', methods=['GET'])
-def get_competition(competition_id):
+@app.route('/getEvent/', methods=['POST'])
+def get_competition():
     try:
-        container = database.get_container_client("CompetitionData")
-        item = container.read_item(item=competition_id, partition_key=competition_id)
+        data = request.json
+        container = database.get_container_client("EventMeta")
+        item = container.read_item(item=data["id"], partition_key=data["EventId"])
         return jsonify(item), 200
+    except exceptions.CosmosResourceNotFoundError:
+        return jsonify({"error": "Competition not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/allcompe', methods=['GET'])
+def getAllcompetition():
+    try:
+        container = database.get_container_client("EventMeta")
+        query = "SELECT * FROM c"
+        items = container.query_items(query=query, enable_cross_partition_query=True)
+        results = list(items)
+        return jsonify(results), 200
     except exceptions.CosmosResourceNotFoundError:
         return jsonify({"error": "Competition not found"}), 404
     except Exception as e:
@@ -73,29 +169,29 @@ def hello():
 @app.route('/competition/<competition_id>', methods=['DELETE'])
 def delete_competition(competition_id):
     try:
-        container = database.get_container_client("CompetitionData")
-        container.delete_item(item=competition_id, partition_key=competition_id)
+        data = request.json
+        container = database.get_container_client("EventMeta")
+        container.delete_item(item=data["id"], partition_key=data["EventId"])
         return jsonify({"message": "Competition deleted successfully"}), 200
     except exceptions.CosmosResourceNotFoundError:
         return jsonify({"error": "Competition not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 def add_scorecard(data):
-    data = request.json
-    competition_id = data.get('id')
+    competition_id = data.get('EventId')
     # Initialize Cosmos Client
-    scorecard_container = database.get_container_client("ScoreCardData")
+    scorecard_container = database.get_container_client("EventScoreCard")
     # Create scorecard entry for every judge * team combination
-    for judge in data.get('judges', []):
+    for judge in data.get('JudegsInfo', []):
         judge_id = judge.get('id')
         judge_name = judge.get('name')
-        for team in data.get('teams', []):
+        for team in data.get('teamsInfo', []):
             team_id = team.get('teamName', {}).get('id')
             team_name = team.get('teamName', {}).get('name')
             # Create initial scorecard document
             scorecard_document = {
                 'id':generate_unique_id(),
-                'competitionId': competition_id,
+                'EventId':data["EventId"],
                 'judgeId': judge_id,
                 'judgeName':judge_name,
                 'teamId': team_id,
@@ -133,13 +229,13 @@ def update_scores():
 def getScorecard():
     try:
         data = request.json
-        competition_id = data.get('competitionId')
+        competition_id = data.get('EventId')
         judge_id = data.get('judgeId')
         if not competition_id or not judge_id:
             return jsonify({"error": "Please provide both competitionId and judgeId in the request body"}), 400
-        scorecard_container = database.get_container_client("ScoreCardData")
+        scorecard_container = database.get_container_client("EventScoreCard")
         # Query scorecards for the given competition_id and judge_id
-        query = f"SELECT * FROM c WHERE c.competitionId = '{competition_id}' AND c.judgeId = '{judge_id}'"
+        query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}' AND c.judgeId = '{judge_id}'"
         scorecards = list(scorecard_container.query_items(query=query, enable_cross_partition_query=True))
         return jsonify(scorecards), 200
     except Exception as e:
@@ -170,3 +266,5 @@ def get_leaderboard():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0")
+
+
