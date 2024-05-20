@@ -10,7 +10,7 @@ from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 
 
 app = Flask(__name__)
-cors = CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 # Define Azure Cosmos DB connection settings
 # Replace these placeholders with your actual Cosmos DB details
 COSMOS_ENDPOINT = config.settings['host']
