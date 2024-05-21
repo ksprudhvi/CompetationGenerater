@@ -1,16 +1,15 @@
 import uuid
+from datetime import datetime, timedelta
 
 from flask import Flask, request, jsonify
 from azure.cosmos import CosmosClient, exceptions
 import config
 from flask_cors import CORS
 import azure.cosmos.exceptions as exceptions
-from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
-
-
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient, generate_blob_sas, BlobSasPermissions
 
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+cors = CORS(app)
 # Define Azure Cosmos DB connection settings
 # Replace these placeholders with your actual Cosmos DB details
 COSMOS_ENDPOINT = config.settings['host']
@@ -30,8 +29,23 @@ container_client = blob_service_client.get_container_client(BlobContainer_name)
 
 # Function to upload image to Azure Blob Storage
 def upload_image(file):
-    blob_client = container_client.get_blob_client(file.filename)
-    blob_client.upload_blob(file)
+    try:
+        blob_client = container_client.get_blob_client(file.filename)
+        blob_client.upload_blob(file)
+        expiry_time = datetime.utcnow() + timedelta(days=365*100)
+        sas_token = generate_blob_sas(
+            account_name=blob_service_client.account_name,
+            container_name=BlobContainer_name,
+            blob_name=file.filename,
+            account_key=blob_service_client.credential.account_key,
+            permission=BlobSasPermissions(read=True),
+            expiry=expiry_time
+        )
+        # Construct the URL with SAS token
+        blob_url = f"https://{blob_service_client.account_name}.blob.core.windows.net/{BlobContainer_name}/{file.filename}?{sas_token}"
+        return jsonify({'ImageUrl':blob_url})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # Function to retrieve image from Azure Blob Storage
 def get_image(filename):
@@ -41,13 +55,16 @@ def get_image(filename):
 
 @app.route('/upload', methods=['POST'])
 def upload():
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file part'})
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No selected file'})
-    upload_image(file)
-    return jsonify({'message': 'File uploaded successfully'})
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part'})
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'No selected file'})
+        ImageUrl=upload_image(file)
+        return ImageUrl
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/image/<filename>', methods=['GET'])
 def get_image_route(filename):
