@@ -160,8 +160,12 @@ def get_competition():
     try:
         data = request.json
         container = database.get_container_client("EventMeta")
-        item = container.read_item(item=data["id"], partition_key=data["EventId"])
-        return jsonify(item), 200
+        competition_id=data["EventId"]
+        query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}'"
+        items = container.query_items(query=query, enable_cross_partition_query=True)
+        results = list(items)
+        results=results[0]
+        return jsonify(results), 200
     except exceptions.CosmosResourceNotFoundError:
         return jsonify({"error": "Competition not found"}), 404
     except Exception as e:
