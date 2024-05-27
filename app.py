@@ -5,6 +5,8 @@ from flask import Flask, request, jsonify
 from azure.cosmos import CosmosClient, exceptions
 import config
 from flask_cors import CORS
+import string
+import random
 import azure.cosmos.exceptions as exceptions
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient, generate_blob_sas, BlobSasPermissions
 
@@ -59,6 +61,7 @@ def upload():
         if 'file' not in request.files:
             return jsonify({'error': 'No file part'})
         file = request.files['file']
+        file.filename=request.form['EventId']
         if file.filename == '':
             return jsonify({'error': 'No selected file'})
         ImageUrl=upload_image(file)
@@ -93,6 +96,7 @@ def createTeams():
     container = database.get_container_client("EventTeamsJudges")
     try:
         container.create_item(body=data)
+        generateAccessTokensCoachAccess(data)
         return jsonify({"eventId": data["EventId"]}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -113,6 +117,72 @@ def getTeamsJudges(EventId):
             enable_cross_partition_query=True
         ))
         return jsonify(items), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def generate_token():
+    """Generates a unique 6-character alphanumeric token."""
+    alphanumeric = string.ascii_letters + string.digits
+    token = ''.join(random.sample(alphanumeric, 6))
+    return token
+def generateAccessTokensJudges(data):
+    accessTokenContainer = database.get_container_client("EventAccessTokens")
+    for judge in data.get('JudegsInfo', []):
+        judge_id = judge.get('id')
+        judge_name = judge.get('name')
+        scorecardAccessTokens = {
+            'id':generate_unique_id(),
+            'EventId':data["EventId"],
+            'judgeId': judge_id,
+            'judgeName':judge_name,
+            'HostAccess':False,
+            'JudgeAccess':True,
+            'CoachAccess':False,
+            'Token':generate_token()
+        }
+        try:
+            # Insert scorecard document into container
+            accessTokenContainer.create_item(body=scorecardAccessTokens)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+
+def generateAccessTokensCoachAccess(data):
+    accessTokenContainer = database.get_container_client("EventAccessTokens")
+    for coachData in data.get('teamsInfo', []):
+        coach=coachData['coachName']
+        coach_id = coach.get('id')
+        coach_name = coach.get('name')
+        scorecardAccessTokens = {
+            'id':generate_unique_id(),
+            'EventId':data["EventId"],
+            'coachId': coach_id,
+            'coachName':coach_name,
+            'CoachEmail':coach.get('email'),
+            'HostAccess':False,
+            'JudgeAccess':False,
+            'CoachAccess':True,
+            'Token':generate_token()
+        }
+        try:
+            # Insert scorecard document into container
+            accessTokenContainer.create_item(body=scorecardAccessTokens)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+
+def generateAccessTokensHostAccess(data):
+    accessTokenContainer = database.get_container_client("EventScoreCard")
+    scorecardAccessTokens = {
+        'id':generate_unique_id(),
+        'HostEmail':data['HostEmail'],
+        'HostAccess':True,
+        'JudgeAccess':True,
+        'CoachAccess':True,
+    }
+    try:
+        # Insert scorecard document into container
+        accessTokenContainer.create_item(body=scorecardAccessTokens)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -137,6 +207,7 @@ def createJudges():
     try:
         dataTemp['JudegsInfo']=data['JudegsInfo']
         updated_document = container.replace_item(item=dataTemp['id'], body=dataTemp)
+        generateAccessTokensJudges(updated_document)
         add_scorecard(dataTemp)
         return jsonify(updated_document), 201
     except Exception as e:
@@ -187,8 +258,8 @@ def getAllcompetition():
 def hello():
     return "hello Server is up"
 # Delete competition from Azure Cosmos DB based on CompetitionId
-@app.route('/competition/<competition_id>', methods=['DELETE'])
-def delete_competition(competition_id):
+@app.route('/competition/', methods=['DELETE'])
+def delete_competition():
     try:
         data = request.json
         container = database.get_container_client("EventMeta")
@@ -235,10 +306,11 @@ def update_scores():
     try:
         data = request.json
         scorecard_id=data["id"]
+        eventId=data["EventId"]
         new_scores=data["scorecard"]
         scorecard_container = database.get_container_client("ScoreCardData")
         # Retrieve the scorecard document from the database
-        scorecard_document = scorecard_container.read_item(item=scorecard_id,partition_key=scorecard_id)
+        scorecard_document = scorecard_container.read_item(item=scorecard_id,partition_key=eventId)
         # Update the scores in the scorecard document
         scorecard_document['scorecard'].update(new_scores)
         # Replace the existing document with the updated one
@@ -261,6 +333,21 @@ def getScorecard():
         return jsonify(scorecards), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route('/getAccessTokens', methods=['POST'])
+def getAccessTokens():
+    try:
+        data = request.json
+        competition_id = data.get('EventId')
+        scorecard_container = database.get_container_client("EventAccessTokens")
+        # Query scorecards for the given competition_id and judge_id
+        query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}'"
+        scorecards = list(scorecard_container.query_items(query=query, enable_cross_partition_query=True))
+        return jsonify(scorecards), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/getleaderboard', methods=['POST'])
 def get_leaderboard():
     try:
