@@ -138,7 +138,7 @@ def generateAccessTokensJudges(data):
             'HostAccess':False,
             'JudgeAccess':True,
             'CoachAccess':False,
-            'Token':generate_token()
+            'TokenId':generate_token()
         }
         try:
             # Insert scorecard document into container
@@ -162,7 +162,7 @@ def generateAccessTokensCoachAccess(data):
             'HostAccess':False,
             'JudgeAccess':False,
             'CoachAccess':True,
-            'Token':generate_token()
+            'TokenId':generate_token()
         }
         try:
             # Insert scorecard document into container
@@ -324,13 +324,35 @@ def getScorecard():
         data = request.json
         competition_id = data.get('EventId')
         judge_id = data.get('judgeId')
+        teamId = data.get('teamId')
         if not competition_id or not judge_id:
             return jsonify({"error": "Please provide both competitionId and judgeId in the request body"}), 400
         scorecard_container = database.get_container_client("EventScoreCard")
-        # Query scorecards for the given competition_id and judge_id
-        query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}' AND c.judgeId = '{judge_id}'"
+            # Query scorecards for the given competition_id and judge_id
+        query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}' AND c.judgeId = '{judge_id}' AND c.teamId='{teamId}'"
         scorecards = list(scorecard_container.query_items(query=query, enable_cross_partition_query=True))
         return jsonify(scorecards), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/validateJudgeAccessToken', methods=['POST'])
+def validateJudgeAccessToken():
+    try:
+        data = request.json
+        competition_id = data.get('EventId')
+        judge_id = data.get('judgeId')
+        tokenValidation = database.get_container_client("EventAccessTokens")
+        if not competition_id or not judge_id:
+            return jsonify({"error": "Please provide both competitionId and judgeId in the request body"}), 400
+        validationQuery = f"SELECT * FROM c WHERE c.EventId = '{competition_id}' AND c.judgeId = '{judge_id}'"
+        Tokens = list(tokenValidation.query_items(query=validationQuery, enable_cross_partition_query=True))
+        Tokens=Tokens[0]
+        if(Tokens['TokenId']==data['TokenId']):
+            result={'validation':'true'}
+        else:
+            result={'validation':'false'}
+        return jsonify(result), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
