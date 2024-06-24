@@ -291,9 +291,11 @@ def add_scorecard(data):
                 'teamMemberId': None,  # Assuming we don't have specific team member ID here
                 'scorecard': {
                     'creativity': 0,
-                    'presentation': 0,
-                    'innovation': 0,
-                    'teamwork': 0
+                    'formation': 0,
+                    'technique': 0,
+                    'difficulty': 0,
+                    'sync': 0,
+                    'total':0,
                 }
             }
             try:
@@ -308,7 +310,7 @@ def update_scores():
         scorecard_id=data["id"]
         eventId=data["EventId"]
         new_scores=data["scorecard"]
-        scorecard_container = database.get_container_client("ScoreCardData")
+        scorecard_container = database.get_container_client("EventScoreCard")
         # Retrieve the scorecard document from the database
         scorecard_document = scorecard_container.read_item(item=scorecard_id,partition_key=eventId)
         # Update the scores in the scorecard document
@@ -334,6 +336,7 @@ def getScorecard():
         return jsonify(scorecards), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 
 @app.route('/validateJudgeAccessToken', methods=['POST'])
@@ -370,25 +373,26 @@ def getAccessTokens():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+
 @app.route('/getleaderboard', methods=['POST'])
 def get_leaderboard():
     try:
         data = request.json
-        competition_id=data['id']
-        scorecard_container = database.get_container_client("ScoreCardData")
-        query = f"SELECT * FROM c WHERE c.competitionId = '{competition_id}'"
+        competition_id=data['EventId']
+        scorecard_container = database.get_container_client("EventScoreCard")
+        query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}'"
         scorecards = list(scorecard_container.query_items(query=query, enable_cross_partition_query=True))
-
         # Calculate total scores for each team
         team_scores = {}
         for scorecard in scorecards:
             team_id = scorecard['teamId']
-            score = scorecard['scorecard']['creativity'] + scorecard['scorecard']['presentation'] + scorecard['scorecard']['innovation'] + scorecard['scorecard']['teamwork']
+            team_name=scorecard['teamName']
+            score = scorecard['scorecard']['creativity']+scorecard['scorecard']['sync'] + scorecard['scorecard']['formation'] + scorecard['scorecard']['technique'] + scorecard['scorecard']['difficulty']
             team_scores[team_id] = team_scores.get(team_id, 0) + score
-
         # Sort the teams by total score
         sorted_teams = sorted(team_scores.items(), key=lambda x: x[1], reverse=True)
-        leaderboard = [{'teamId': team_id, 'total_score': total_score} for team_id, total_score in sorted_teams]
+        leaderboard = [{'teamId': team_id, 'total_score': total_score} for team_id,total_score in sorted_teams]
 
         return jsonify({"leaderboard": leaderboard}), 200
     except Exception as e:
