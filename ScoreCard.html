@@ -25,14 +25,14 @@
                 <div marginheight="0" marginwidth="0" style="margin:0;padding:0;background:#0c172f">
                     <h1
                             style="display:none;line-height:0%;color:#fff;font-size:1px;font-family:Helvetica,Arial,sans-serif;font-style:normal;font-weight:bold;letter-spacing:normal;margin-top:0;margin-right:0;margin-bottom:18px;margin-left:0">
-                        PLACEHOLDER_EVENT_TITLE</h1>
+                        eventTitle</h1>
                     <center>
                         <!DOCTYPE html>
                         <html lang="en">
                         <head>
                             <meta charset="UTF-8">
                             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                            <title>Scorecard for Test Dance Event</title>
+                            <title>{{titleHeading}}</title>
                             <style>
                                 body {
                                     font-family: Arial, sans-serif;
@@ -77,7 +77,7 @@
                         </head>
                         <body>
                         <div class="container">
-                            <h1>Scorecard for {{EventTitle}}</h1>
+                            <h1>Scorecard for {{eventTitle}}</h1>
                             <p><strong>Category:</strong> {{category}}</p>
                             <p><strong>Judge:</strong> {{judgeName}}</p>
                             <p><strong>Team:</strong> {{teamName}}</p>
@@ -102,7 +102,7 @@
                                 </tr>
                                 <tr>
                                     <td>Formation</td>
-                                    <td>{formation}}</td>
+                                    <td>{{formation}}</td>
                                 </tr>
                                 <tr>
                                     <td>Sync</td>
