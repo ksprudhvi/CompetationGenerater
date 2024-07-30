@@ -1,6 +1,10 @@
+import os
 import uuid
 from datetime import datetime, timedelta
-
+import smtplib
+from email.mime.application import MIMEApplication
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from flask import Flask, request, jsonify
 from azure.cosmos import CosmosClient, exceptions
 import config
@@ -9,6 +13,13 @@ import string
 import random
 import azure.cosmos.exceptions as exceptions
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient, generate_blob_sas, BlobSasPermissions
+from reportlab.lib.colors import black, grey, white, darkblue, darkred, lightgrey
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 app = Flask(__name__)
 cors = CORS(app)
@@ -81,8 +92,9 @@ def generate_unique_id():
 def create_competition():
     data = request.json
     data["id"]=generate_unique_id()
-
+    #Catogary Based Event Creation
     container = database.get_container_client("EventMeta")
+    data["status"]="Scheduled"
     try:
         container.create_item(body=data)
         return jsonify({"eventId": data["EventId"]}), 201
@@ -272,37 +284,51 @@ def delete_competition():
 def add_scorecard(data):
     competition_id = data.get('EventId')
     # Initialize Cosmos Client
+    container = database.get_container_client("EventMeta")
+    query = f"SELECT c.eventCategory FROM c WHERE c.EventId = '{competition_id}'"
+    try:
+        # Insert scorecard document into container
+        items = container.query_items(query=query, enable_cross_partition_query=True)
+        eventCategorys = list(items)
+        eventCategorys=eventCategorys[0]
+        eventCategorys=eventCategorys.get('eventCategory')
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
     scorecard_container = database.get_container_client("EventScoreCard")
     # Create scorecard entry for every judge * team combination
-    for judge in data.get('JudegsInfo', []):
-        judge_id = judge.get('id')
-        judge_name = judge.get('name')
-        for team in data.get('teamsInfo', []):
-            team_id = team.get('teamName', {}).get('id')
-            team_name = team.get('teamName', {}).get('name')
-            # Create initial scorecard document
-            scorecard_document = {
-                'id':generate_unique_id(),
-                'EventId':data["EventId"],
-                'judgeId': judge_id,
-                'judgeName':judge_name,
-                'teamId': team_id,
-                'teamName':team_name,
-                'teamMemberId': None,  # Assuming we don't have specific team member ID here
-                'scorecard': {
-                    'creativity': 0,
-                    'formation': 0,
-                    'technique': 0,
-                    'difficulty': 0,
-                    'sync': 0,
-                    'total':0,
+    #Category Score Cards
+    for category in eventCategorys:
+        for judge in data.get('JudegsInfo', []):
+            judge_id = judge.get('id')
+            judge_name = judge.get('name')
+            for team in data.get('teamsInfo', []):
+                team_id = team.get('teamName', {}).get('id')
+                team_name = team.get('teamName', {}).get('name')
+                # Create initial scorecard document
+                scorecard_document = {
+                    'id':generate_unique_id(),
+                    'EventId':data["EventId"],
+                    'judgeId': judge_id,
+                    'judgeName':judge_name,
+                    'teamId': team_id,
+                    'teamName':team_name,
+                    'category':category,
+                    'teamMemberId': None,  # Assuming we don't have specific team member ID here
+                    'scorecard': {
+                        'creativity': 0,
+                        'formation': 0,
+                        'technique': 0,
+                        'difficulty': 0,
+                        'sync': 0,
+                        'total':0,
+                    }
                 }
-            }
-            try:
-            # Insert scorecard document into container
-                scorecard_container.create_item(body=scorecard_document)
-            except Exception as e:
-                return jsonify({"error": str(e)}), 500
+                try:
+                # Insert scorecard document into container
+                    scorecard_container.create_item(body=scorecard_document)
+                except Exception as e:
+                    return jsonify({"error": str(e)}), 500
 @app.route('/update_scores', methods=['POST'])
 def update_scores():
     try:
@@ -327,11 +353,12 @@ def getScorecard():
         competition_id = data.get('EventId')
         judge_id = data.get('judgeId')
         teamId = data.get('teamId')
+        category=data.get('category')
         if not competition_id or not judge_id:
             return jsonify({"error": "Please provide both competitionId and judgeId in the request body"}), 400
         scorecard_container = database.get_container_client("EventScoreCard")
             # Query scorecards for the given competition_id and judge_id
-        query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}' AND c.judgeId = '{judge_id}' AND c.teamId='{teamId}'"
+        query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}' AND c.judgeId = '{judge_id}' AND c.teamId='{teamId}' AND c.category='{category}'"
         scorecards = list(scorecard_container.query_items(query=query, enable_cross_partition_query=True))
         return jsonify(scorecards), 200
     except Exception as e:
@@ -398,6 +425,286 @@ def get_leaderboard():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+GMAIL_USER = 'kprudhvi25@gmail.com'
+GMAIL_PASSWORD = 'eavg fofs tkkk rpcr'  # Use App Password if 2-Step Verification is enabled
+def read_html_content(file_path):
+    with open(file_path, 'r') as file:
+        return file.read()
+
+@app.route('/send-email', methods=['POST'])
+def send_email():
+    recipient = 'ksprudhviofficial@gmail.com'
+    subject = 'Test'
+    html_content = read_html_content("emailInvite.html")
+    html_content.replace("PLACEHOLDER_COMPANY_NAME","Productions")
+    html_content.replace("PLACEHOLDER_EVENT_TITLE","Productions")
+    try:
+        # Create the email message
+        msg = MIMEMultipart()
+        msg['From'] = GMAIL_USER
+        msg['To'] = recipient
+        msg['Subject'] = subject
+        msg.attach(MIMEText(html_content, 'html'))
+
+        # Connect to Gmail's SMTP server
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()  # Upgrade the connection to secure
+            server.login(GMAIL_USER, GMAIL_PASSWORD)
+            server.sendmail(GMAIL_USER, recipient, msg.as_string())
+
+        return jsonify({'message': 'Email sent successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
+def format_html_content(template, data):
+    for key, value in data.items():
+        placeholder = '{{' + key + '}}'
+        template = template.replace(placeholder, str(value))
+    return template
+@app.route('/send-scorecard', methods=['POST'])
+def sendScoreCardsemail():
+    data=request.json
+    recipient = 'ksprudhviofficial@gmail.com'
+    subject = 'Test'
+    html_content = read_html_content("ScoreCard.html")
+    formatted_html = format_html_content(html_content, data[0])
+    pdf_filename="ScoreCard.pdf"
+    createScoreCardPdf(pdf_filename,data)
+    try:
+        # Create the email message
+        msg = MIMEMultipart()
+        msg['From'] = GMAIL_USER
+        msg['To'] = recipient
+        msg['Subject'] = subject
+        msg.attach(MIMEText(formatted_html, 'html'))
+
+        with open(pdf_filename, 'rb') as pdf_file:
+            pdf_attachment = MIMEApplication(pdf_file.read(), _subtype='pdf')
+            pdf_attachment.add_header('Content-Disposition', 'attachment', filename=pdf_filename)
+            msg.attach(pdf_attachment)
+        # Connect to Gmail's SMTP server
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()  # Upgrade the connection to secure
+            server.login(GMAIL_USER, GMAIL_PASSWORD)
+            server.sendmail(GMAIL_USER, recipient, msg.as_string())
+
+        return jsonify({'message': 'Email sent successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
+@app.route('/confEventOrder', methods=['POST'])
+def configureEventOrder():
+    data=request.json
+    competition_id=data['EventId']
+    scorecard_container = database.get_container_client("EventScoreCard")
+    # Query scorecards for the given competition_id and judge_id
+    query = f"SELECT c.category,c.teamId,c.teamName FROM c WHERE c.EventId = '{competition_id}'"
+    listPerformances = list(scorecard_container.query_items(query=query, enable_cross_partition_query=True))
+    eventOrder_document = {
+        "id":generate_unique_id(),
+        "EventId": competition_id,
+        "categoryOrder": []
+    }
+    # Organize performances by category
+    categories = {}
+    for performance in listPerformances:
+        category = performance.get("category")
+        team_id = performance.get("teamId")
+        team_name = performance.get("teamName")
+
+        if category not in categories:
+            categories[category] = []
+
+        categories[category].append({
+            "teamId": team_id,
+            "teamName": team_name,
+        })
+
+    for category_index, (category, teams) in enumerate(categories.items(), start=1):
+        eventOrder_document["categoryOrder"].append({
+            "category": category,
+            "order": category_index,
+            "performances": []
+        })
+
+        for team_index, team in enumerate(teams, start=1):
+            team_with_order = team.copy()
+            team_with_order["order"] = team_index
+            eventOrder_document["categoryOrder"][-1]["performances"].append(team_with_order)
+
+    # Insert the document into the EventOrderConfig container
+    Ordercontainer = database.get_container_client("EventOrderConfig")
+    try:
+        Ordercontainer.create_item(body=eventOrder_document)
+        return  eventOrder_document, 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+@app.route('/getEventOrder', methods=['POST'])
+def getEventOrder():
+    Ordercontainer = database.get_container_client("EventOrderConfig")
+    data=request.json
+    competition_id=data['EventId']
+    try:
+        query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}'"
+        eventOrder_document = list(Ordercontainer.query_items(query=query, enable_cross_partition_query=True))
+        return  eventOrder_document[0], 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+@app.route('/updateEventOrder', methods=['POST'])
+def updateEventOrder():
+    Ordercontainer = database.get_container_client("EventOrderConfig")
+    data=request.json
+    competition_id=data['EventId']
+    order_id=data['id']
+    try:
+        updated_document = Ordercontainer.replace_item(item=order_id, body=data)
+        return  updated_document, 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+def createScoreCardPdf(filename,data):
+    doc = SimpleDocTemplate(filename, pagesize=letter)
+    styles = getSampleStyleSheet()
+    elements = []
+
+    # Title
+    title_style = styles['Title']
+    title_style.fontName = 'Helvetica-Bold'
+    title_style.fontSize = 24
+    title_style.alignment = TA_CENTER
+    title = Paragraph("Score Card", title_style)
+    elements.append(title)
+    elements.append(Spacer(1, 0.5 * inch))
+
+    for entry in data:
+        # Event Title
+        event_title_style = styles['Heading1']
+        event_title_style.fontName = 'Helvetica-Bold'
+        event_title_style.fontSize = 20
+        event_title_style.alignment = TA_CENTER
+        event_title = Paragraph(f"{entry['EventTitle']}", event_title_style)
+        elements.append(event_title)
+        elements.append(Spacer(1, 0.25 * inch))
+
+        # Judge and Team Details
+        details_style = styles['Normal']
+        details_style.fontName = 'Helvetica'
+        details_style.fontSize = 12
+        details_style.alignment = TA_LEFT
+        judge_name = Paragraph(f"<b>Judge:</b> {entry['judgeName']}", details_style)
+        team_name = Paragraph(f"<b>Team:</b> {entry['teamName']}", details_style)
+        comments = Paragraph(f"<b>Comments:</b> {entry['Comments']}", details_style)
+        elements.append(judge_name)
+        elements.append(team_name)
+        elements.append(comments)
+        elements.append(Spacer(1, 0.5 * inch))
+
+        # Performance Table
+        table_data = [
+            ["Category", "Score"],
+            ["Creativity", entry['creativity']],
+            ["Difficulty", entry['difficulty']],
+            ["Formation", entry['formation']],
+            ["Sync", entry['sync']],
+            ["Technique", entry['technique']],
+            ["Total", entry['total']]
+        ]
+
+        table = Table(table_data, colWidths=[2.5 * inch, 1.5 * inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#4CAF50')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ]))
+        elements.append(table)
+        elements.append(Spacer(1, 0.5 * inch))
+
+    # Build PDF
+    doc.build(elements)
+
+
+def create_pdf(filename, data):
+    doc = SimpleDocTemplate(filename, pagesize=letter)
+    styles = getSampleStyleSheet()
+    elements = []
+
+    # Title
+    title = Paragraph("Event Schedule", styles['Title'])
+    elements.append(title)
+    elements.append(Paragraph("<br/>", styles['Normal']))
+
+    # Event ID
+    event_id = Paragraph(f"Event ID: {data['EventId']}", styles['Normal'])
+    elements.append(event_id)
+    elements.append(Paragraph("<br/>", styles['Normal']))
+
+    # Categories and Performances
+    for category in data['categoryOrder']:
+        category_title = Paragraph(f"<b>Category: {category['category']} (Order: {category['order']})</b>", styles['Heading2'])
+        elements.append(category_title)
+
+        # Table Data
+        table_data = [["Order", "Team Name"]]  # Removed "Team ID"
+        for performance in category['performances']:
+            table_data.append([performance['order'], performance['teamName']])  # Removed "Team ID"
+
+        # Create Table
+        table = Table(table_data, colWidths=[1 * inch, 2.5 * inch])
+        table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), grey),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('GRID', (0, 0), (-1, -1), 1, black),
+        ]))
+
+        elements.append(table)
+        elements.append(Paragraph("<br/>", styles['Normal']))
+
+    # Build PDF
+    doc.build(elements)
+
+# Route to send email with PDF attachment
+@app.route('/send-email-with-pdf', methods=['POST'])
+def send_email_with_pdf():
+    data = request.json
+    pdf_filename = "EventSchedule.pdf"
+    recipient = 'ksprudhviofficial@gmail.com'
+    subject = 'Test'
+
+    # Create the PDF
+    create_pdf(pdf_filename, data)
+
+    # Read and format HTML content
+    html_content = read_html_content("EventSchedule.html")
+    formatted_html = format_html_content(html_content, data)
+
+    try:
+        # Create the email message
+        msg = MIMEMultipart()
+        msg['From'] = GMAIL_USER
+        msg['To'] = recipient
+        msg['Subject'] = subject
+        msg.attach(MIMEText(formatted_html, 'html'))
+
+        # Attach PDF
+        with open(pdf_filename, 'rb') as pdf_file:
+            pdf_attachment = MIMEApplication(pdf_file.read(), _subtype='pdf')
+            pdf_attachment.add_header('Content-Disposition', 'attachment', filename=pdf_filename)
+            msg.attach(pdf_attachment)
+
+        # Connect to Gmail's SMTP server
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            server.starttls()  # Upgrade the connection to secure
+            server.login(GMAIL_USER, GMAIL_PASSWORD)
+            server.sendmail(GMAIL_USER, recipient, msg.as_string())
+
+        # Clean up
+        os.remove(pdf_filename)
+
+        return jsonify({'message': 'Email sent successfully with PDF attachment'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
 if __name__ == "__main__":
     app.run(host="0.0.0.0")
 
