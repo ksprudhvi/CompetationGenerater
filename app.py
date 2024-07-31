@@ -102,6 +102,7 @@ def create_competition():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
 @app.route('/updateTeams', methods=['POST'])
 def createTeams():
     data = request.json
@@ -407,24 +408,46 @@ def getAccessTokens():
 def get_leaderboard():
     try:
         data = request.json
-        competition_id=data['EventId']
+        competition_id = data['EventId']
         scorecard_container = database.get_container_client("EventScoreCard")
         query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}'"
         scorecards = list(scorecard_container.query_items(query=query, enable_cross_partition_query=True))
-        # Calculate total scores for each team
-        team_scores = {}
+
+        # Initialize dictionary to store scores per category
+        category_scores = {}
+
         for scorecard in scorecards:
             team_id = scorecard['teamId']
-            team_name=scorecard['teamName']
-            score = scorecard['scorecard']['creativity']+scorecard['scorecard']['sync'] + scorecard['scorecard']['formation'] + scorecard['scorecard']['technique'] + scorecard['scorecard']['difficulty']
-            team_scores[team_id] = team_scores.get(team_id, 0) + score
-        # Sort the teams by total score
-        sorted_teams = sorted(team_scores.items(), key=lambda x: x[1], reverse=True)
-        leaderboard = [{'teamId': team_id, 'total_score': total_score} for team_id,total_score in sorted_teams]
+            team_name = scorecard['teamName']
+            category = scorecard['category']
+            score = scorecard['scorecard']['creativity'] + scorecard['scorecard']['sync'] + scorecard['scorecard']['formation'] + scorecard['scorecard']['technique'] + scorecard['scorecard']['difficulty']
+
+            # Create a unique key for each team per category
+            team_category_key = (team_name, category)
+
+            if category not in category_scores:
+                category_scores[category] = {}
+
+            if team_category_key not in category_scores[category]:
+                category_scores[category][team_category_key] = {
+                    'teamId': team_id,
+                    'teamName': team_name,
+                    'category': category,
+                    'total_score': 0
+                }
+
+            category_scores[category][team_category_key]['total_score'] += score
+
+        # Prepare leaderboard sorted by categories and scores
+        leaderboard = {}
+        for category, scores in category_scores.items():
+            sorted_scores = sorted(scores.values(), key=lambda x: x['total_score'], reverse=True)
+            leaderboard[category] = sorted_scores
 
         return jsonify({"leaderboard": leaderboard}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 GMAIL_USER = 'kprudhvi25@gmail.com'
 GMAIL_PASSWORD = 'eavg fofs tkkk rpcr'  # Use App Password if 2-Step Verification is enabled
@@ -536,9 +559,16 @@ def configureEventOrder():
         "EventId": competition_id,
         "categoryOrder": []
     }
+    seen = set()
+    unique_listPerformances = []
+    for performance in listPerformances:
+        identifier = (performance['category'], performance['teamId'], performance['teamName'])
+        if identifier not in seen:
+            seen.add(identifier)
+            unique_listPerformances.append(performance)
     # Organize performances by category
     categories = {}
-    for performance in listPerformances:
+    for performance in unique_listPerformances:
         category = performance.get("category")
         team_id = performance.get("teamId")
         team_name = performance.get("teamName")
