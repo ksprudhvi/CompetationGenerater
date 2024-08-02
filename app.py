@@ -178,18 +178,19 @@ def generateAccessTokensCoachAccess(data):
             'CoachAccess':True,
             'TokenId':generate_token()
         }
-        try:
-            # Insert scorecard document into container
+        try: # Insert scorecard document into container
             accessTokenContainer.create_item(body=scorecardAccessTokens)
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
-
-def generateAccessTokensHostAccess(data):
-    accessTokenContainer = database.get_container_client("EventScoreCard")
+@app.route('/CreateHostAccess', methods=['POST'])
+def generateAccessTokensHostAccess():
+    data=request.json
+    accessTokenContainer = database.get_container_client("EventAccessTokens")
     scorecardAccessTokens = {
         'id':generate_unique_id(),
-        'HostEmail':data['HostEmail'],
+        'TokenId':generate_token(),
+        'Email':data['Email'],
         'HostAccess':True,
         'JudgeAccess':True,
         'CoachAccess':True,
@@ -197,10 +198,45 @@ def generateAccessTokensHostAccess(data):
     try:
         # Insert scorecard document into container
         accessTokenContainer.create_item(body=scorecardAccessTokens)
+        return jsonify({"message": "Successfully Created Host Access "}), 500
     except Exception as e:
+        print("this is tyhe error"+e)
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/createLoginDetails', methods=['POST'])
+def createAccount():
+    data=request.json
+    accessTokenContainer = database.get_container_client("EventAuthKeys")
+    scorecardAccessTokens = {
+        'id':generate_unique_id(),
+        'Email':data['Email'],
+        'Password':data['Password']
+    }
+    try:
+        # Insert scorecard document into container
+        accessTokenContainer.create_item(body=scorecardAccessTokens)
+        return jsonify({"message": "Successfully Created Account "}), 500
+    except Exception as e:
+        print("this is tyhe error"+e)
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/authLoginDetails', methods=['POST'])
+def authLoginDetails():
+    data=request.json
+    accessTokenContainer = database.get_container_client("EventAuthKeys")
+    try:
+        validationQuery = f"SELECT * FROM c WHERE c.Email = '{data['Email']}' AND c.Password = '{data['Password']}'"
+        Tokens = list(accessTokenContainer.query_items(query=validationQuery, enable_cross_partition_query=True))
+        if(len(Tokens)>0):
+            accessTokenContainer = database.get_container_client("EventAccessTokens")
+            validationQuery = f"SELECT * FROM c WHERE c.Email = '{data['Email']}' AND c.Password = '{data['Password']}'"
+        else:
+            result={'validation':'false'}
+        return jsonify(result), 200
+        # Insert scorecard document into container
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/updateJudges', methods=['POST'])
 def createJudges():
