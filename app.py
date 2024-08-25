@@ -564,7 +564,6 @@ def sendScoreCardsemail():
                         emails.append(team['DirectorName']['email'])
         createScoreCardPdf(entry['judgeName']+'_ScoreCard.pdf',entry)
         emails = list(filter(None, set(emails)))
-        emails=[]
         emails.append("ksprudhviofficial@gmail.com")
         recipient = ', '.join(emails)
         try:
@@ -586,7 +585,7 @@ def sendScoreCardsemail():
                 server.sendmail(GMAIL_USER, recipient, msg.as_string())
         except Exception as e:
             return jsonify({'error': str(e)})
-        return jsonify({'message': "success"})
+    return jsonify({'message': "success"})
 @app.route('/confEventOrder', methods=['POST'])
 def configureEventOrder():
     data=request.json
