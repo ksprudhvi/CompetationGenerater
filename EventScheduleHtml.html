@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Event Schedule</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            padding: 20px;
+        }
+        .container {
+            width: 100%;
+            max-width: 600px;
+            margin: 0 auto;
+            border: 1px solid #ccc;
+            border-radius: 10px;
+            padding: 20px;
+            background-color: #f9f9f9;
+        }
+        h1 {
+            font-size: 24px;
+            text-align: center;
+            margin-bottom: 20px;
+            color: #444;
+        }
+        .schedule-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+        .schedule-table th, .schedule-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .schedule-table th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        .schedule-table tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        .footer {
+            text-align: center;
+            font-size: 14px;
+            color: #777;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{{ eventTitle }}</h1>
+        <p><strong>Date:</strong> {{ eventDateString }}</p>
+        <p><strong>Venue:</strong> {{ eventVenue }}</p>
+        <table class="schedule-table">
+            <thead>
+                <tr>
+                    <th>Time</th>
+                    <th>Performance</th>
+                    <th>Team</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Loop through performances -->
+                {% for performance in performances %}
+                <tr>
+                    <td>{{ performance.time }}</td>
+                    <td>{{ performance.name }}</td>
+                    <td>{{ performance.team }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div class="footer">
+        <p>This is an automated message. Please do not reply.</p>
+    </div>
+</body>
+</html>

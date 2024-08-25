@@ -814,7 +814,7 @@ def send_email_with_pdf():
     create_pdf(pdf_filename, data,eventOrder_document[0])
 
     # Read and format HTML content
-    html_content = read_html_content("EventSchedule.html")
+    html_content = read_html_content("EventSchedule-converted.html")
     formatted_html = format_html_content(html_content, data)
 
     try:
