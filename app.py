@@ -224,12 +224,14 @@ def createAccount():
 @app.route('/authLoginDetails', methods=['POST'])
 def authLoginDetails():
     data=request.json
+    result={}
     accessTokenContainer = database.get_container_client("EventAuthKeys")
     try:
         validationQuery = f"SELECT * FROM c WHERE c.Email = '{data['Email']}' AND c.Password = '{data['Password']}'"
         Tokens = list(accessTokenContainer.query_items(query=validationQuery, enable_cross_partition_query=True))
         if(len(Tokens)>0):
             accessTokenContainer = database.get_container_client("EventAccessTokens")
+            result={'validation':'true'}
             validationQuery = f"SELECT * FROM c WHERE c.Email = '{data['Email']}' AND c.Password = '{data['Password']}'"
         else:
             result={'validation':'false'}
@@ -360,7 +362,8 @@ def add_scorecard(data):
                         'difficulty': 0,
                         'sync': 0,
                         'total':0,
-                    }
+                    },
+                    'comments':''
                 }
                 try:
                 # Insert scorecard document into container
@@ -374,11 +377,13 @@ def update_scores():
         scorecard_id=data["id"]
         eventId=data["EventId"]
         new_scores=data["scorecard"]
+        comments=data["comment"]
         scorecard_container = database.get_container_client("EventScoreCard")
         # Retrieve the scorecard document from the database
         scorecard_document = scorecard_container.read_item(item=scorecard_id,partition_key=eventId)
         # Update the scores in the scorecard document
         scorecard_document['scorecard'].update(new_scores)
+        scorecard_document['comments']=comments
         # Replace the existing document with the updated one
         updated_document = scorecard_container.replace_item(item=scorecard_id, body=scorecard_document)
     except Exception as e:
@@ -811,25 +816,34 @@ def send_email_with_pdf():
     recipient = ', '.join(emails)
     query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}'"
     eventOrder_document = list(Ordercontainer.query_items(query=query, enable_cross_partition_query=True))
-    create_pdf(pdf_filename, data,eventOrder_document[0])
-
+    #create_pdf(pdf_filename, data,eventOrder_document[0])
     # Read and format HTML content
-    html_content = read_html_content("EventSchedule-converted.html")
-    formatted_html = format_html_content(html_content, data)
-
+    firsthtml = read_html_content("EventSchedule-converted.html")
+    firsthtml=format_html_content(firsthtml, data)
+    for category in eventOrder_document[0]['categoryOrder']:
+        html_content = read_html_content("categoryEventTag.html")
+        tagData={}
+        tagData['Category']=category['category']
+        # Table Data
+        table_data = [["Order", "Team Name"]]  # Removed "Team ID"
+        orderTags=''
+        for performance in category['performances']:
+            perData={}
+            entryTag = read_html_content("orderandTeamTag.html")
+            perData['order']=performance['order']
+            perData['TeamName']=performance['teamName']
+            orderTags=orderTags+format_html_content(entryTag, perData)
+        tagData['orderTags']  = orderTags
+        firsthtml = firsthtml+format_html_content(html_content, tagData)
+    firsthtml=firsthtml+read_html_content("EventScheduleEnd.html")
     try:
         # Create the email message
         msg = MIMEMultipart()
         msg['From'] = GMAIL_USER
         msg['To'] = recipient
         msg['Subject'] = subject
-        msg.attach(MIMEText(formatted_html, 'html'))
+        msg.attach(MIMEText(firsthtml, 'html'))
 
-        # Attach PDF
-        with open(pdf_filename, 'rb') as pdf_file:
-            pdf_attachment = MIMEApplication(pdf_file.read(), _subtype='pdf')
-            pdf_attachment.add_header('Content-Disposition', 'attachment', filename=pdf_filename)
-            msg.attach(pdf_attachment)
 
         # Connect to Gmail's SMTP server
         with smtplib.SMTP('smtp.gmail.com', 587) as server:
