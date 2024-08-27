@@ -156,6 +156,7 @@ def createTeams():
             # Record does not exist, create a new one
             container.create_item(body=data)
             return jsonify({"eventId": data["EventId"]}), 201
+        configureEventOrder(data)
     except exceptions.CosmosResourceNotFoundError:
         # Handle the case where the container or database does not exist
         return jsonify({"error": "Resource not found"}), 404
@@ -668,11 +669,8 @@ def sendScoreCardsemail():
         except Exception as e:
             return jsonify({'error': str(e)})
     return jsonify({'message': "success"})
-@app.route('/confEventOrder', methods=['POST'])
-def configureEventOrder():
-    data = request.json
+def configureEventOrder(data):
     competition_id = data['EventId']
-    
     scorecard_container = database.get_container_client("EventScoreCard")
     # Query scorecards for the given competition_id
     query = f"SELECT c.category, c.teamId, c.teamName FROM c WHERE c.EventId = @EventId"
