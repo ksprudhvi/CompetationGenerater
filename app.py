@@ -106,13 +106,35 @@ def create_competition():
 @app.route('/updateTeams', methods=['POST'])
 def createTeams():
     data = request.json
-    data["id"]=generate_unique_id()
+    # Ensure EventId is in the data
+    if "EventId" not in data:
+        return jsonify({"error": "EventId is required"}), 400
+    # Generate a unique ID for the record (if necessary)
+    data["id"] = generate_unique_id()
     container = database.get_container_client("EventTeamsJudges")
     try:
-        container.create_item(body=data)
-        generateAccessTokensCoachAccess(data)
-        return jsonify({"eventId": data["EventId"]}), 201
+        # Check if the record with the given EventId already exists
+        query = "SELECT * FROM c WHERE c.EventId=@eventId"
+        parameters = [{"name": "@eventId", "value": data["EventId"]}]
+        existing_records = list(container.query_items(query=query, parameters=parameters, enable_cross_partition_query=True))
+        if existing_records:
+            # Record exists, update it
+            existing_record = existing_records[0]
+            # Update the existing record with new data
+            container.replace_item(item=existing_record["id"], body=data)
+            return jsonify({"eventId": data["EventId"]}), 200
+        else:
+            # Record does not exist, create a new one
+            container.create_item(body=data)
+            return jsonify({"eventId": data["EventId"]}), 201
+    except exceptions.CosmosResourceNotFoundError:
+        # Handle the case where the container or database does not exist
+        return jsonify({"error": "Resource not found"}), 404
+    except exceptions.CosmosHttpResponseError as e:
+        # Handle other Cosmos DB errors
+        return jsonify({"error": str(e)}), 500
     except Exception as e:
+        # Handle any other exceptions
         return jsonify({"error": str(e)}), 500
 
 @app.route('/getTeamsJudges/<EventId>', methods=['GET'])
