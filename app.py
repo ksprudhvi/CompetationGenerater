@@ -163,24 +163,55 @@ def generate_token():
     return token
 def generateAccessTokensJudges(data):
     accessTokenContainer = database.get_container_client("EventAccessTokens")
+    
     for judge in data.get('JudegsInfo', []):
         judge_id = judge.get('id')
         judge_name = judge.get('name')
+        
+        # Define the scorecard access token document
         scorecardAccessTokens = {
-            'id':generate_unique_id(),
-            'EventId':data["EventId"],
+            'id': generate_unique_id(),
+            'EventId': data["EventId"],
             'judgeId': judge_id,
-            'judgeName':judge_name,
-            'HostAccess':False,
-            'JudgeAccess':True,
-            'CoachAccess':False,
-            'TokenId':generate_token()
+            'judgeName': judge_name,
+            'HostAccess': False,
+            'JudgeAccess': True,
+            'CoachAccess': False,
+            'TokenId': generate_token()
         }
+
+        # Query to check if token already exists for this judge and event
+        query = "SELECT * FROM c WHERE c.EventId = @EventId AND c.judgeId = @judgeId"
+        query_params = [
+            {"name": "@EventId", "value": data["EventId"]},
+            {"name": "@judgeId", "value": judge_id}
+        ]
+
         try:
-            # Insert scorecard document into container
-            accessTokenContainer.create_item(body=scorecardAccessTokens)
+            # Check for existing tokens
+            existing_tokens = list(accessTokenContainer.query_items(
+                query=query,
+                parameters=query_params,
+                enable_cross_partition_query=True
+            ))
+
+            if existing_tokens:
+                # If token exists, replace it
+                existing_token = existing_tokens[0]
+                scorecardAccessTokens['TokenId']=existing_token['TokenId']
+                updated_token = accessTokenContainer.replace_item(item=existing_token['id'], body=scorecardAccessTokens)
+                print(f"Updated access token for judge {judge_id}: {updated_token}")
+            else:
+                # If token does not exist, create a new one
+                created_token = accessTokenContainer.create_item(body=scorecardAccessTokens)
+                print(f"Created new access token for judge {judge_id}: {created_token}")
+                
+        except exceptions.CosmosHttpResponseError as e:
+            # Log the error and continue; individual token creation or replacement failures should not stop the process
+            print(f"Failed to process access token for judge {judge_id}: {e}")
         except Exception as e:
-            return jsonify({"error": str(e)}), 500
+            # Handle unexpected errors
+            print(f"Unexpected error for judge {judge_id}: {e}")
 
 
 def generateAccessTokensCoachAccess(data):
