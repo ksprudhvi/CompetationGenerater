@@ -92,14 +92,43 @@ def generate_unique_id():
 @app.route('/competition', methods=['POST'])
 def create_competition():
     data = request.json
-    data["id"]=generate_unique_id()
-    #Catogary Based Event Creation
+    
+    # Ensure EventId is in the data
+    if "EventId" not in data:
+        return jsonify({"error": "EventId is required"}), 400
+    data["id"] = generate_unique_id()
+    data["status"] = "Scheduled"
     container = database.get_container_client("EventMeta")
-    data["status"]="Scheduled"
+    # Query to check if a competition with the given EventId already exists
+    query = "SELECT * FROM c WHERE c.EventId = @EventId"
+    query_params = [
+        {"name": "@EventId", "value": data["EventId"]}
+    ]
+
     try:
-        container.create_item(body=data)
-        return jsonify({"eventId": data["EventId"]}), 201
+        # Check if the competition already exists
+        existing_items = list(container.query_items(
+            query=query,
+            parameters=query_params,
+            enable_cross_partition_query=True
+        ))
+        if existing_items:
+            # If the competition exists, replace it
+            existing_item = existing_items[0]
+            updated_item = container.replace_item(item=existing_item['id'], body=data)
+            return jsonify({"eventId": data["EventId"]}), 200
+        else:
+            # If the competition does not exist, create a new one
+            new_item = container.create_item(body=data)
+            return jsonify({"eventId": data["EventId"]}), 201
+    except exceptions.CosmosResourceNotFoundError:
+        # Handle the case where the container or database does not exist
+        return jsonify({"error": "Resource not found"}), 404
+    except exceptions.CosmosHttpResponseError as e:
+        # Handle other Cosmos DB errors
+        return jsonify({"error": str(e)}), 500
     except Exception as e:
+        # Handle any other exceptions
         return jsonify({"error": str(e)}), 500
 
 
