@@ -670,17 +670,26 @@ def sendScoreCardsemail():
     return jsonify({'message': "success"})
 @app.route('/confEventOrder', methods=['POST'])
 def configureEventOrder():
-    data=request.json
-    competition_id=data['EventId']
+    data = request.json
+    competition_id = data['EventId']
+    
     scorecard_container = database.get_container_client("EventScoreCard")
-    # Query scorecards for the given competition_id and judge_id
-    query = f"SELECT c.category,c.teamId,c.teamName FROM c WHERE c.EventId = '{competition_id}'"
-    listPerformances = list(scorecard_container.query_items(query=query, enable_cross_partition_query=True))
+    # Query scorecards for the given competition_id
+    query = f"SELECT c.category, c.teamId, c.teamName FROM c WHERE c.EventId = @EventId"
+    query_params = [{"name": "@EventId", "value": competition_id}]
+    
+    listPerformances = list(scorecard_container.query_items(
+        query=query,
+        parameters=query_params,
+        enable_cross_partition_query=True
+    ))
+
     eventOrder_document = {
-        "id":generate_unique_id(),
+        "id": generate_unique_id(),
         "EventId": competition_id,
         "categoryOrder": []
     }
+
     seen = set()
     unique_listPerformances = []
     for performance in listPerformances:
@@ -688,6 +697,7 @@ def configureEventOrder():
         if identifier not in seen:
             seen.add(identifier)
             unique_listPerformances.append(performance)
+
     # Organize performances by category
     categories = {}
     for performance in unique_listPerformances:
@@ -715,11 +725,31 @@ def configureEventOrder():
             team_with_order["order"] = team_index
             eventOrder_document["categoryOrder"][-1]["performances"].append(team_with_order)
 
-    # Insert the document into the EventOrderConfig container
+    # Container for EventOrderConfig
     Ordercontainer = database.get_container_client("EventOrderConfig")
+    
     try:
-        Ordercontainer.create_item(body=eventOrder_document)
-        return  eventOrder_document, 200
+        # Check if the event order document already exists
+        existing_documents = list(Ordercontainer.query_items(
+            query="SELECT * FROM c WHERE c.EventId = @EventId",
+            parameters=query_params,
+            enable_cross_partition_query=True
+        ))
+
+        if existing_documents:
+            # If exists, replace the document
+            existing_document = existing_documents[0]
+            updated_document = Ordercontainer.replace_item(item=existing_document['id'], body=eventOrder_document)
+            return jsonify(updated_document), 200
+        else:
+            # If does not exist, create a new document
+            new_document = Ordercontainer.create_item(body=eventOrder_document)
+            return jsonify(new_document), 201
+
+    except exceptions.CosmosResourceNotFoundError:
+        return jsonify({"error": "Resource not found"}), 404
+    except exceptions.CosmosHttpResponseError as e:
+        return jsonify({"error": str(e)}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 @app.route('/getEventOrder', methods=['POST'])
