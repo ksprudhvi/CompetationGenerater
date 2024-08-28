@@ -151,12 +151,13 @@ def createTeams():
             existing_record = existing_records[0]
             # Update the existing record with new data
             container.replace_item(item=existing_record["id"], body=data)
+            configureEventOrder(data) 
             return jsonify({"eventId": data["EventId"]}), 200
         else:
             # Record does not exist, create a new one
             container.create_item(body=data)
+            configureEventOrder(data) 
             return jsonify({"eventId": data["EventId"]}), 201
-        configureEventOrder(data)
     except exceptions.CosmosResourceNotFoundError:
         # Handle the case where the container or database does not exist
         return jsonify({"error": "Resource not found"}), 404
@@ -675,7 +676,6 @@ def configureEventOrder(data):
     # Query scorecards for the given competition_id
     query = f"SELECT c.category, c.teamId, c.teamName FROM c WHERE c.EventId = @EventId"
     query_params = [{"name": "@EventId", "value": competition_id}]
-    
     listPerformances = list(scorecard_container.query_items(
         query=query,
         parameters=query_params,
