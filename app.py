@@ -151,12 +151,12 @@ def createTeams():
             existing_record = existing_records[0]
             # Update the existing record with new data
             container.replace_item(item=existing_record["id"], body=data)
-            configureEventOrder(data) 
+            configureEventOrderMain(data) 
             return jsonify({"eventId": data["EventId"]}), 200
         else:
             # Record does not exist, create a new one
             container.create_item(body=data)
-            configureEventOrder(data) 
+            configureEventOrderMain(data) 
             return jsonify({"eventId": data["EventId"]}), 201
     except exceptions.CosmosResourceNotFoundError:
         # Handle the case where the container or database does not exist
@@ -750,6 +750,99 @@ def configureEventOrder(data):
         return jsonify({"error": str(e)}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+def configureEventOrderMain(data):
+    competition_id = data['EventId']
+    container = database.get_container_client("EventTeamsJudges")
+    meta_conatiner = database.get_container_client("EventMeta")
+    # Query scorecards for the given competition_id
+    query = f"SELECT c.teamsInfo FROM c WHERE c.EventId = @EventId"
+    category_query=f"SELECT c.eventCategory FROM c WHERE c.EventId = @EventId"
+    query_params = [{"name": "@EventId", "value": competition_id}]
+    listCategory = list(meta_conatiner.query_items(
+        query=category_query,
+        parameters=query_params,
+        enable_cross_partition_query=True
+    ))
+    listPerformances = list(container.query_items(
+        query=query,
+        parameters=query_params,
+        enable_cross_partition_query=True
+    ))
+
+    eventOrder_document = {
+        "id": generate_unique_id(),
+        "EventId": competition_id,
+        "categoryOrder": []
+    }
+
+    seen = set()
+    unique_listPerformances = []
+    for category in listCategory[0]['eventCategory']:
+        for performance in listPerformances[0]['teamsInfo']:
+            identifier = (category, performance['teamName']['id'], performance['teamName']['name'])
+            data = {
+            'category': category,
+            'teamId': performance['teamName']['id'],
+            'teamName': performance['teamName']['name']
+            }
+            if identifier not in seen:
+                seen.add(identifier)
+                unique_listPerformances.append(data)
+
+    # Organize performances by category
+    categories = {}
+    for performance in unique_listPerformances:
+        category = performance.get("category")
+        team_id = performance.get("teamId")
+        team_name = performance.get("teamName")
+
+        if category not in categories:
+            categories[category] = []
+
+        categories[category].append({
+            "teamId": team_id,
+            "teamName": team_name,
+        })
+
+    for category_index, (category, teams) in enumerate(categories.items(), start=1):
+        eventOrder_document["categoryOrder"].append({
+            "category": category,
+            "order": category_index,
+            "performances": []
+        })
+
+        for team_index, team in enumerate(teams, start=1):
+            team_with_order = team.copy()
+            team_with_order["order"] = team_index
+            eventOrder_document["categoryOrder"][-1]["performances"].append(team_with_order)
+
+    # Container for EventOrderConfig
+    Ordercontainer = database.get_container_client("EventOrderConfig")
+    
+    try:
+        # Check if the event order document already exists
+        existing_documents = list(Ordercontainer.query_items(
+            query="SELECT * FROM c WHERE c.EventId = @EventId",
+            parameters=query_params,
+            enable_cross_partition_query=True
+        ))
+
+        if existing_documents:
+            # If exists, replace the document
+            existing_document = existing_documents[0]
+            updated_document = Ordercontainer.replace_item(item=existing_document['id'], body=eventOrder_document)
+            return jsonify(updated_document), 200
+        else:
+            # If does not exist, create a new document
+            new_document = Ordercontainer.create_item(body=eventOrder_document)
+            return jsonify(new_document), 201
+
+    except exceptions.CosmosResourceNotFoundError:
+        return jsonify({"error": "Resource not found"}), 404
+    except exceptions.CosmosHttpResponseError as e:
+        return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500        
 @app.route('/getEventOrder', methods=['POST'])
 def getEventOrder():
     Ordercontainer = database.get_container_client("EventOrderConfig")
