@@ -20,6 +20,16 @@ from reportlab.lib.units import inch
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from flask import Flask, request, jsonify
+from apscheduler.schedulers.background import BackgroundScheduler
+from datetime import datetime, timedelta
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import os
+import json
+import azure.cosmos as cosmos
+from azure.cosmos import PartitionKey
 
 
 app = Flask(__name__)
@@ -270,14 +280,11 @@ def generateAccessTokensCoachAccess(data):
 @app.route('/CreateHostAccess', methods=['POST'])
 def generateAccessTokensHostAccess():
     data=request.json
-    accessTokenContainer = database.get_container_client("EventAccessTokens")
+    accessTokenContainer = database.get_container_client("EventHostMeta")
     scorecardAccessTokens = {
         'id':generate_unique_id(),
-        'TokenId':generate_token(),
+        'HostId':generate_token(),
         'Email':data['Email'],
-        'HostAccess':True,
-        'JudgeAccess':True,
-        'CoachAccess':True,
     }
     try:
         # Insert scorecard document into container
@@ -286,7 +293,80 @@ def generateAccessTokensHostAccess():
     except Exception as e:
         print("this is tyhe error"+e)
         return jsonify({"error": str(e)}), 500
+import random
+import string
 
+def generate_code(length=6):
+    characters = string.ascii_letters + string.digits
+    code = ''.join(random.choice(characters) for _ in range(length))
+    return code
+
+# Example usage
+print(generate_code(6))  # Generates a 6-character random code
+
+@app.route('/SentOtp', methods=['POST'])
+def SentOtp():
+    data=request.json
+    emails = data['Email']
+    recipient =emails
+    subject = 'Email OTP Verification'
+    html_content = read_html_content("emailInvite.html")
+    otp=generate_code(6)
+    data=request.json
+    accessTokenContainer = database.get_container_client("OtpMeta")
+    otpDoc = {
+        'id':generate_unique_id(),
+        'Email':data['Email'],
+        'Otp':otp,
+        'CreationDateTimeStamp': datetime.now().isoformat()
+    }
+    accessTokenContainer.create_item(body=otpDoc)
+    html_content = format_html_content(html_content, otpDoc)
+    try:
+        # Create the email message
+        msg = MIMEMultipart()
+        msg['From'] = OUTLOOK_USER
+        msg['To'] = recipient
+        msg['Subject'] = subject
+        msg.attach(MIMEText(html_content, 'html'))
+        # Connect to Gmail's SMTP server
+        with smtplib.SMTP('smtp.office365.com', 587) as server:
+            server.starttls()  # Upgrade the connection to secure
+            server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
+            server.sendmail(OUTLOOK_USER, recipient, msg.as_string())
+        return jsonify({'message': 'Email sent successfully'})
+    except Exception as e:
+        return jsonify({'error': str(e)})
+    
+@app.route('/OtpVerification', methods=['POST'])
+def OtpVerification():
+    data=request.json
+    otpContainer = database.get_container_client("OtpMeta")
+    try:
+        validationQuery = f"SELECT * FROM c WHERE c.Email = '{data['Email']}' AND c.Otp = '{data['OTP_CODE']}'"
+        Tokens = list(otpContainer.query_items(query=validationQuery, enable_cross_partition_query=True))
+        if(len(Tokens)>0):
+            result={'validation':'true'}
+        else:
+            result={'validation':'false'}
+        return jsonify(result), 200
+        # Insert scorecard document into container
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500   
+# Define the function to delete old OTP entries
+def delete_old_otps():
+    ten_minutes_ago = datetime.now() - timedelta(minutes=3)
+    query = "SELECT * FROM c WHERE c.CreationDateTimeStamp < @timestamp"
+    parameters = [{'name': '@timestamp', 'value': ten_minutes_ago.isoformat()}]
+    otpContainer = database.get_container_client("OtpMeta")
+    old_otps = otpContainer.query_items(query=query, parameters=parameters, enable_cross_partition_query=True)
+    for otp in old_otps:
+        otpContainer.delete_item(item=otp, partition_key=otp['id'])
+
+# Setup APScheduler to run the delete_old_otps function every minute
+scheduler = BackgroundScheduler()
+scheduler.add_job(delete_old_otps, 'interval', minutes=1)
+scheduler.start()     
 @app.route('/createLoginDetails', methods=['POST'])
 def createAccount():
     data=request.json
@@ -299,6 +379,9 @@ def createAccount():
     try:
         # Insert scorecard document into container
         accessTokenContainer.create_item(body=scorecardAccessTokens)
+        if(data['HostAccessRequest']=='true'):
+            RequestContainer = database.get_container_client("HostAccessRequests")
+            RequestContainer.create_item(body=scorecardAccessTokens)
         return jsonify({"message": "Successfully Created Account "}), 500
     except Exception as e:
         print("this is tyhe error"+e)
@@ -314,7 +397,7 @@ def authLoginDetails():
         validationQuery = f"SELECT * FROM c WHERE c.Email = '{data['Email']}' AND c.Password = '{data['Password']}'"
         Tokens = list(accessTokenContainer.query_items(query=validationQuery, enable_cross_partition_query=True))
         if(len(Tokens)>0):
-            accessTokenContainer = database.get_container_client("EventAccessTokens")
+            accessTokenContainer = database.get_container_client("EventHostMeta")
             result={'validation':'true'}
             validationQuery = f"SELECT * FROM c WHERE c.Email = '{data['Email']}' AND c.Password = '{data['Password']}'"
         else:
@@ -573,9 +656,8 @@ def get_leaderboard():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-
-GMAIL_USER = 'kprudhvi25@gmail.com'
-GMAIL_PASSWORD = 'eavg fofs tkkk rpcr'  # Use App Password if 2-Step Verification is enabled
+OUTLOOK_USER='s3productionsllc@outlook.com'
+OUTLOOK_PASSWORD='umxvtipvvhgqjwls'  # Use App Password if 2-Step Verification is enabled
 def read_html_content(file_path):
     with open(file_path, 'r') as file:
         return file.read()
@@ -587,20 +669,21 @@ def send_email():
     recipient = ', '.join(emails)
     subject = 'Test'
     html_content = read_html_content("emailInvite.html")
+    formatted_html = format_html_content(html_content, entry)
     html_content.replace("PLACEHOLDER_COMPANY_NAME","Productions")
     html_content.replace("PLACEHOLDER_EVENT_TITLE","Productions")
     try:
         # Create the email message
         msg = MIMEMultipart()
-        msg['From'] = GMAIL_USER
+        msg['From'] = OUTLOOK_USER
         msg['To'] = recipient
         msg['Subject'] = subject
         msg.attach(MIMEText(html_content, 'html'))
         # Connect to Gmail's SMTP server
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+        with smtplib.SMTP('smtp.office365.com', 587) as server:
             server.starttls()  # Upgrade the connection to secure
-            server.login(GMAIL_USER, GMAIL_PASSWORD)
-            server.sendmail(GMAIL_USER, recipient, msg.as_string())
+            server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
+            server.sendmail(OUTLOOK_USER, recipient, msg.as_string())
         return jsonify({'message': 'Email sent successfully'})
     except Exception as e:
         return jsonify({'error': str(e)})
@@ -609,6 +692,9 @@ def format_html_content(template, data):
         placeholder = '{{' + key + '}}'
         template = template.replace(placeholder, str(value))
     return template
+
+
+
 @app.route('/send-scorecard', methods=['POST'])
 def sendScoreCardsemail():
     data=request.json
@@ -653,7 +739,7 @@ def sendScoreCardsemail():
         try:
             # Create the email message
             msg = MIMEMultipart()
-            msg['From'] = GMAIL_USER
+            msg['From'] = OUTLOOK_USER
             msg['To'] = recipient
             msg['Subject'] = subject
             msg.attach(MIMEText(formatted_html, 'html'))
@@ -663,10 +749,10 @@ def sendScoreCardsemail():
                 pdf_attachment.add_header('Content-Disposition', 'attachment', filename=pdf_filename)
                 msg.attach(pdf_attachment)
             # Connect to Gmail's SMTP server
-            with smtplib.SMTP('smtp.gmail.com', 587) as server:
+            with smtplib.SMTP('smtp.office365.com', 587) as server:
                 server.starttls()  # Upgrade the connection to secure
-                server.login(GMAIL_USER, GMAIL_PASSWORD)
-                server.sendmail(GMAIL_USER, recipient, msg.as_string())
+                server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
+                server.sendmail(OUTLOOK_USER, recipient, msg.as_string())
         except Exception as e:
             return jsonify({'error': str(e)})
     return jsonify({'message': "success"})
@@ -1041,17 +1127,17 @@ def send_email_with_pdf():
     try:
         # Create the email message
         msg = MIMEMultipart()
-        msg['From'] = GMAIL_USER
+        msg['From'] = OUTLOOK_USER
         msg['To'] = recipient
         msg['Subject'] = subject
         msg.attach(MIMEText(firsthtml, 'html'))
 
 
         # Connect to Gmail's SMTP server
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+        with smtplib.SMTP('smtp.office365.com', 587) as server:
             server.starttls()  # Upgrade the connection to secure
-            server.login(GMAIL_USER, GMAIL_PASSWORD)
-            server.sendmail(GMAIL_USER, recipient, msg.as_string())
+            server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
+            server.sendmail(OUTLOOK_USER, recipient, msg.as_string())
         # Clean up
         os.remove(pdf_filename)
         return jsonify({'message': 'Email sent successfully with PDF attachment'})
