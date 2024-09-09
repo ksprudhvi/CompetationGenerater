@@ -20,16 +20,6 @@ from reportlab.lib.units import inch
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
-from flask import Flask, request, jsonify
-from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime, timedelta
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-import os
-import json
-import azure.cosmos as cosmos
-from azure.cosmos import PartitionKey
 
 
 app = Flask(__name__)
@@ -108,6 +98,7 @@ def create_competition():
         return jsonify({"error": "EventId is required"}), 400
     data["id"] = generate_unique_id()
     data["status"] = "Scheduled"
+    data["CreationDateTimeStamp"]= datetime.now().isoformat()
     container = database.get_container_client("EventMeta")
     # Query to check if a competition with the given EventId already exists
     query = "SELECT * FROM c WHERE c.EventId = @EventId"
@@ -150,6 +141,7 @@ def createTeams():
         return jsonify({"error": "EventId is required"}), 400
     # Generate a unique ID for the record (if necessary)
     data["id"] = generate_unique_id()
+    data["CreationDateTimeStamp"]= datetime.now().isoformat()
     container = database.get_container_client("EventTeamsJudges")
     try:
         # Check if the record with the given EventId already exists
@@ -218,7 +210,8 @@ def generateAccessTokensJudges(data):
             'HostAccess': False,
             'JudgeAccess': True,
             'CoachAccess': False,
-            'TokenId': generate_token()
+            'TokenId': generate_token(),
+            'CreationDateTimeStamp':datetime.now().isoformat()
         }
 
         # Query to check if token already exists for this judge and event
@@ -270,7 +263,8 @@ def generateAccessTokensCoachAccess(data):
             'HostAccess':False,
             'JudgeAccess':False,
             'CoachAccess':True,
-            'TokenId':generate_token()
+            'TokenId':generate_token(),
+            'CreationDateTimeStamp':datetime.now().isoformat()
         }
         try: # Insert scorecard document into container
             accessTokenContainer.create_item(body=scorecardAccessTokens)
@@ -280,16 +274,26 @@ def generateAccessTokensCoachAccess(data):
 @app.route('/CreateHostAccess', methods=['POST'])
 def generateAccessTokensHostAccess():
     data=request.json
-    accessTokenContainer = database.get_container_client("EventHostMeta")
+    HostConatiner = database.get_container_client("EventHostMeta")
     scorecardAccessTokens = {
         'id':generate_unique_id(),
-        'HostId':generate_token(),
+        'HostId':generate_unique_id(),
         'Email':data['Email'],
+        'CreationDateTimeStamp':datetime.now().isoformat()
     }
+    accessTokenContainer = database.get_container_client("HostAccessRequests")
     try:
         # Insert scorecard document into container
-        accessTokenContainer.create_item(body=scorecardAccessTokens)
-        return jsonify({"message": "Successfully Created Host Access "}), 500
+        HostConatiner.create_item(body=scorecardAccessTokens)
+        query = f"SELECT * FROM HostAccessRequests c WHERE c.Email = '{data['Email']}'"
+        items = list(accessTokenContainer.query_items(query=query, enable_cross_partition_query=True))
+
+        # If item(s) found, delete them
+        for item in items:
+            accessTokenContainer.delete_item(item=item['id'], partition_key=item['id'])
+        
+        return jsonify({"message": "Successfully Created Host Access"}), 200
+        return jsonify({"message": "Successfully Created Host Access "}), 200
     except Exception as e:
         print("this is tyhe error"+e)
         return jsonify({"error": str(e)}), 500
@@ -354,19 +358,19 @@ def OtpVerification():
     except Exception as e:
         return jsonify({"error": str(e)}), 500   
 # Define the function to delete old OTP entries
-def delete_old_otps():
-    ten_minutes_ago = datetime.now() - timedelta(minutes=3)
-    query = "SELECT * FROM c WHERE c.CreationDateTimeStamp < @timestamp"
-    parameters = [{'name': '@timestamp', 'value': ten_minutes_ago.isoformat()}]
-    otpContainer = database.get_container_client("OtpMeta")
-    old_otps = otpContainer.query_items(query=query, parameters=parameters, enable_cross_partition_query=True)
-    for otp in old_otps:
-        otpContainer.delete_item(item=otp, partition_key=otp['id'])
+# def delete_old_otps():
+#     ten_minutes_ago = datetime.now() - timedelta(minutes=10)
+#     query = "SELECT * FROM c WHERE c.CreationDateTimeStamp < @timestamp"
+#     parameters = [{'name': '@timestamp', 'value': ten_minutes_ago.isoformat()}]
+#     otpContainer = database.get_container_client("OtpMeta")
+#     old_otps = otpContainer.query_items(query=query, parameters=parameters, enable_cross_partition_query=True)
+#     for otp in old_otps:
+#         otpContainer.delete_item(item=otp, partition_key=otp['id'])
 
-# Setup APScheduler to run the delete_old_otps function every minute
-scheduler = BackgroundScheduler()
-scheduler.add_job(delete_old_otps, 'interval', minutes=1)
-scheduler.start()     
+# # Setup APScheduler to run the delete_old_otps function every minute
+# scheduler = BackgroundScheduler()
+# scheduler.add_job(delete_old_otps, 'interval', minutes=1)
+# scheduler.start()     
 @app.route('/createLoginDetails', methods=['POST'])
 def createAccount():
     data=request.json
@@ -374,7 +378,8 @@ def createAccount():
     scorecardAccessTokens = {
         'id':generate_unique_id(),
         'Email':data['Email'],
-        'Password':data['Password']
+        'Password':data['Password'],
+        'CreationDateTimeStamp':datetime.now().isoformat()
     }
     try:
         # Insert scorecard document into container
@@ -382,11 +387,25 @@ def createAccount():
         if(data['HostAccessRequest']=='true'):
             RequestContainer = database.get_container_client("HostAccessRequests")
             RequestContainer.create_item(body=scorecardAccessTokens)
-        return jsonify({"message": "Successfully Created Account "}), 500
+        return jsonify({"message": "Successfully Created Account "}), 200
     except Exception as e:
         print("this is tyhe error"+e)
         return jsonify({"error": str(e)}), 500
 
+@app.route('/approveHostAccess', methods=['POST'])
+def approveHostAccess():
+    data=request.json
+    result={}
+    accessTokenContainer = database.get_container_client("HostAccessRequests")
+    try:
+        container = database.get_container_client("EventMeta")
+        query = "SELECT * FROM c"
+        items = accessTokenContainer.query_items(query=query, enable_cross_partition_query=True)
+        result = list(items)
+        return jsonify(result), 200
+        # Insert scorecard document into container
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/authLoginDetails', methods=['POST'])
 def authLoginDetails():
@@ -398,10 +417,14 @@ def authLoginDetails():
         Tokens = list(accessTokenContainer.query_items(query=validationQuery, enable_cross_partition_query=True))
         if(len(Tokens)>0):
             accessTokenContainer = database.get_container_client("EventHostMeta")
-            result={'validation':'true'}
-            validationQuery = f"SELECT * FROM c WHERE c.Email = '{data['Email']}' AND c.Password = '{data['Password']}'"
+            validationQuery = f"SELECT * FROM c WHERE c.Email = '{data['Email']}'"
+            access=list(accessTokenContainer.query_items(query=validationQuery, enable_cross_partition_query=True))
+            if(len(access)>0):
+                result={'validation':'true','HostAccess':'true','HostId':access[0]['HostId'],'OwnerAccess':'true' if data['Email'] == 's3productionsllc@outlook.com' else 'false'}
+            else:
+                result={'validation':'true','HostAccess':'false','OwnerAccess':'true' if data['Email'] == 's3productionsllc@outlook.com' else 'false'}    
         else:
-            result={'validation':'false'}
+            result={'validation':'false','HostAccess':'false','OwnerAccess':'true' if data['Email'] == 's3productionsllc@outlook.com' else 'false'}
         return jsonify(result), 200
         # Insert scorecard document into container
     except Exception as e:
@@ -530,7 +553,8 @@ def add_scorecard(data):
                         'sync': 0,
                         'total':0,
                     },
-                    'comments':''
+                    'comments':'',
+                    'CreationDateTimeStamp':datetime.now().isoformat()
                 }
                 try:
                 # Insert scorecard document into container
@@ -827,6 +851,7 @@ def configureEventOrder(data):
             return jsonify(updated_document), 200
         else:
             # If does not exist, create a new document
+            eventOrder_document["CreationDateTimeStamp"]=datetime.now().isoformat()
             new_document = Ordercontainer.create_item(body=eventOrder_document)
             return jsonify(new_document), 201
 
@@ -920,6 +945,7 @@ def configureEventOrderMain(data):
             return jsonify(updated_document), 200
         else:
             # If does not exist, create a new document
+            eventOrder_document["CreationDateTimeStamp"]=datetime.now().isoformat()
             new_document = Ordercontainer.create_item(body=eventOrder_document)
             return jsonify(new_document), 201
 
@@ -1046,12 +1072,10 @@ def create_pdf(filename, data,eventOrder):
     for category in eventOrder['categoryOrder']:
         category_title = Paragraph(f"<b>Category: {category['category']} (Order: {category['order']})</b>", styles['Heading2'])
         elements.append(category_title)
-
         # Table Data
         table_data = [["Order", "Team Name"]]  # Removed "Team ID"
         for performance in category['performances']:
             table_data.append([performance['order'], performance['teamName']])  # Removed "Team ID"
-
         # Create Table
         table = Table(table_data, colWidths=[1 * inch, 2.5 * inch])
         table.setStyle(TableStyle([
@@ -1060,7 +1084,6 @@ def create_pdf(filename, data,eventOrder):
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('GRID', (0, 0), (-1, -1), 1, black),
         ]))
-
         elements.append(table)
         elements.append(Paragraph("<br/>", styles['Normal']))
 
