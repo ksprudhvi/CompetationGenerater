@@ -74,12 +74,25 @@ def upload():
             return jsonify({'error': 'No file part'})
         file = request.files['file']
         file.filename=request.form['EventId']
+        
         if file.filename == '':
             return jsonify({'error': 'No selected file'})
         ImageUrl=upload_image(file)
+        if(request.form.__contains__("EventType")):
+            insertBannerMeta(ImageUrl)
         return ImageUrl
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+def insertBannerMeta(imageUrl):
+    container = database.get_container_client("BannerImgUrls")   
+    data={
+        'imageUrl':imageUrl,
+        'BannerId':generate_unique_id,
+        'id':generate_unique_id
+    }
+    new_item = container.create_item(body=data)
+
 
 @app.route('/image/<filename>', methods=['GET'])
 def get_image_route(filename):
@@ -466,7 +479,19 @@ def update_competition():
         return jsonify({"message": "Competition data updated successfully", "updated_data": updated_document}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+#saveScoreParameters   
 
+@app.route('/saveScoreParameters', methods=['POST'])
+def update_Scorecard():
+    data = request.json
+    container = database.get_container_client("EventMeta")
+    try:
+        # Replace the existing competition data with the updated one
+        updated_document = container.replace_item(item=data["id"], body=data)
+        return jsonify({"message": "Competition data updated successfully", "updated_data": updated_document}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 # Fetch data from Azure Cosmos DB based on CompetitionId
 @app.route('/getEvent/', methods=['POST'])
 def get_competition():
@@ -496,6 +521,19 @@ def getAllcompetition():
         return jsonify({"error": "Competition not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route('/getBanners', methods=['GET'])
+def getBanners():
+    try:
+        container = database.get_container_client("BannerImgUrls")
+        query = "SELECT * FROM c"
+        items = container.query_items(query=query, enable_cross_partition_query=True)
+        results = list(items)
+        return jsonify(results), 200
+    except exceptions.CosmosResourceNotFoundError:
+        return jsonify({"error": "Competition not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500    
 @app.route("/")
 def hello():
     return "hello Server is up"
@@ -513,54 +551,62 @@ def delete_competition():
         return jsonify({"error": str(e)}), 500
 def add_scorecard(data):
     competition_id = data.get('EventId')
+
     # Initialize Cosmos Client
     container = database.get_container_client("EventMeta")
-    query = f"SELECT c.eventCategory FROM c WHERE c.EventId = '{competition_id}'"
+    query = f"SELECT c.eventCategory, c.scorecardMeta FROM c WHERE c.EventId = '{competition_id}'"
+    
     try:
-        # Insert scorecard document into container
+        # Fetch event category and scorecard meta
         items = container.query_items(query=query, enable_cross_partition_query=True)
         eventCategorys = list(items)
-        eventCategorys=eventCategorys[0]
-        eventCategorys=eventCategorys.get('eventCategory')
+        if not eventCategorys:
+            return jsonify({"error": "No event category found for the given EventId"}), 404
+
+        eventCategorys = eventCategorys[0]
+        eventScoreCardMeta = eventCategorys.get('scorecardMeta', [])
+        eventCategorys = eventCategorys.get('eventCategory', [])
+
+        # Initialize the scorecard container client
+        scorecard_container = database.get_container_client("EventScoreCard")
+
+        # Create scorecard entry for every judge * team combination
+        for category in eventCategorys:
+            for judge in data.get('JudegsInfo', []):
+                judge_id = judge.get('id')
+                judge_name = judge.get('name')
+                for team in data.get('teamsInfo', []):
+                    team_id = team.get('teamName', {}).get('id')
+                    team_name = team.get('teamName', {}).get('name')
+
+                    # Initialize scorecard with dynamic fields based on scorecardMeta
+                    scorecard = {item['name']: 0 for item in eventScoreCardMeta}
+                    scorecard['total'] = 0  # Initialize total score
+
+                    # Create initial scorecard document
+                    scorecard_document = {
+                        'id': generate_unique_id(),
+                        'EventId': data["EventId"],
+                        'judgeId': judge_id,
+                        'judgeName': judge_name,
+                        'teamId': team_id,
+                        'teamName': team_name,
+                        'category': category,
+                        'teamMemberId': None,  # Assuming we don't have specific team member ID here
+                        'scorecard': scorecard,
+                        'comments': '',
+                        'CreationDateTimeStamp': datetime.now().isoformat()
+                    }
+                    # Insert scorecard document into container
+                    try:
+                        scorecard_container.create_item(body=scorecard_document)
+                    except Exception as e:
+                        return jsonify({"error": str(e)}), 500
+
+        return jsonify({"status": "Scorecards created successfully"}), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
-    scorecard_container = database.get_container_client("EventScoreCard")
-    # Create scorecard entry for every judge * team combination
-    #Category Score Cards
-    for category in eventCategorys:
-        for judge in data.get('JudegsInfo', []):
-            judge_id = judge.get('id')
-            judge_name = judge.get('name')
-            for team in data.get('teamsInfo', []):
-                team_id = team.get('teamName', {}).get('id')
-                team_name = team.get('teamName', {}).get('name')
-                # Create initial scorecard document
-                scorecard_document = {
-                    'id':generate_unique_id(),
-                    'EventId':data["EventId"],
-                    'judgeId': judge_id,
-                    'judgeName':judge_name,
-                    'teamId': team_id,
-                    'teamName':team_name,
-                    'category':category,
-                    'teamMemberId': None,  # Assuming we don't have specific team member ID here
-                    'scorecard': {
-                        'creativity': 0,
-                        'formation': 0,
-                        'technique': 0,
-                        'difficulty': 0,
-                        'sync': 0,
-                        'total':0,
-                    },
-                    'comments':'',
-                    'CreationDateTimeStamp':datetime.now().isoformat()
-                }
-                try:
-                # Insert scorecard document into container
-                    scorecard_container.create_item(body=scorecard_document)
-                except Exception as e:
-                    return jsonify({"error": str(e)}), 500
 @app.route('/update_scores', methods=['POST'])
 def update_scores():
     try:
@@ -640,7 +686,9 @@ def getAccessTokens():
 def get_leaderboard():
     try:
         data = request.json
-        competition_id = data['EventId']
+        competition_id = data.get('EventId')
+
+        # Initialize Cosmos DB container
         scorecard_container = database.get_container_client("EventScoreCard")
         query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}'"
         scorecards = list(scorecard_container.query_items(query=query, enable_cross_partition_query=True))
@@ -648,11 +696,16 @@ def get_leaderboard():
         # Initialize dictionary to store scores per category
         category_scores = {}
 
+        # Process each scorecard entry
         for scorecard in scorecards:
-            team_id = scorecard['teamId']
-            team_name = scorecard['teamName']
-            category = scorecard['category']
-            score = scorecard['scorecard']['creativity'] + scorecard['scorecard']['sync'] + scorecard['scorecard']['formation'] + scorecard['scorecard']['technique'] + scorecard['scorecard']['difficulty']
+            team_id = scorecard.get('teamId')
+            team_name = scorecard.get('teamName')
+            category = scorecard.get('category')
+            scorecard_data = scorecard.get('scorecard', {})
+
+            # Compute score dynamically, excluding 'total'
+            score_fields = [key for key in scorecard_data if key != 'total']
+            score = sum(scorecard_data.get(field, 0) for field in score_fields)
 
             # Create a unique key for each team per category
             team_category_key = (team_name, category)
@@ -677,8 +730,10 @@ def get_leaderboard():
             leaderboard[category] = sorted_scores
 
         return jsonify({"leaderboard": leaderboard}), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 
 OUTLOOK_USER='s3productionsllc@outlook.com'
 OUTLOOK_PASSWORD='umxvtipvvhgqjwls'  # Use App Password if 2-Step Verification is enabled
