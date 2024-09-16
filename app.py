@@ -396,6 +396,9 @@ def SentOtp():
         msg['From'] = OUTLOOK_USER
         msg['To'] = recipient
         msg['Subject'] = subject
+        layout = read_html_content("scorecardLayout.html")
+        emailContent={'mailContent':html_content}
+        html_content = format_html_content(layout, emailContent)
         msg.attach(MIMEText(html_content, 'html'))
         # Connect to Gmail's SMTP server
         with smtplib.SMTP('smtp.office365.com', 587) as server:
@@ -799,6 +802,7 @@ def send_email():
     data=request.json
     emails = data['emails']
     recipient = ', '.join(emails)
+    recipient=recipient.split(",")
     subject = 'Test'
     html_content = read_html_content("emailInvite.html")
     formatted_html = format_html_content(html_content, entry)
@@ -810,15 +814,18 @@ def send_email():
         msg['From'] = OUTLOOK_USER
         msg['To'] = recipient
         msg['Subject'] = subject
+        layout = read_html_content("scorecardLayout.html")
+        emailContent={'mailContent':html_content}
+        html_content = format_html_content(layout, emailContent)
         msg.attach(MIMEText(html_content, 'html'))
         # Connect to Gmail's SMTP server
         with smtplib.SMTP('smtp.office365.com', 587) as server:
             server.starttls()  # Upgrade the connection to secure
             server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
             server.sendmail(OUTLOOK_USER, recipient, msg.as_string())
-        return jsonify({'message': 'Email sent successfully'})
     except Exception as e:
-        return jsonify({'error': str(e)})
+            print( jsonify({'error': str(e)}))
+    return jsonify({'message': 'Email sent successfully with PDF attachment'})
 def format_html_content(template, data):
     for key, value in data.items():
         placeholder = '{{' + key + '}}'
@@ -866,27 +873,31 @@ def sendScoreCardsemail():
                         emails.append(team['DirectorName']['email'])
         createScoreCardPdf(entry['judgeName']+'_ScoreCard.pdf',entry)
         emails = list(filter(None, set(emails)))
-        emails.append("ksprudhviofficial@gmail.com")
         recipient = ', '.join(emails)
-        try:
-            # Create the email message
-            msg = MIMEMultipart()
-            msg['From'] = OUTLOOK_USER
-            msg['To'] = recipient
-            msg['Subject'] = subject
-            msg.attach(MIMEText(formatted_html, 'html'))
+        recipient=recipient.split(",")
+        for entry in recipient:
+            try:
+                # Create the email message
+                msg = MIMEMultipart()
+                msg['From'] = OUTLOOK_USER
+                msg['To'] = entry
+                msg['Subject'] = subject
+                layout = read_html_content("scorecardLayout.html")
+                emailContent={'mailContent':formatted_html}
+                html_content = format_html_content(layout, emailContent)
+                msg.attach(MIMEText(html_content, 'html'))
 
-            with open(pdf_filename, 'rb') as pdf_file:
-                pdf_attachment = MIMEApplication(pdf_file.read(), _subtype='pdf')
-                pdf_attachment.add_header('Content-Disposition', 'attachment', filename=pdf_filename)
-                msg.attach(pdf_attachment)
-            # Connect to Gmail's SMTP server
-            with smtplib.SMTP('smtp.office365.com', 587) as server:
-                server.starttls()  # Upgrade the connection to secure
-                server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
-                server.sendmail(OUTLOOK_USER, recipient, msg.as_string())
-        except Exception as e:
-            return jsonify({'error': str(e)})
+                with open(pdf_filename, 'rb') as pdf_file:
+                    pdf_attachment = MIMEApplication(pdf_file.read(), _subtype='pdf')
+                    pdf_attachment.add_header('Content-Disposition', 'attachment', filename=pdf_filename)
+                    msg.attach(pdf_attachment)
+                # Connect to Gmail's SMTP server
+                with smtplib.SMTP('smtp.office365.com', 587) as server:
+                    server.starttls()  # Upgrade the connection to secure
+                    server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
+                    server.sendmail(OUTLOOK_USER, entry, msg.as_string())
+            except Exception as e:
+                return jsonify({'error': str(e)})
     return jsonify({'message': "success"})
 def configureEventOrder(data):
     competition_id = data['EventId']
@@ -1209,7 +1220,6 @@ def send_email_with_pdf():
     items = container.query_items(query=query, enable_cross_partition_query=True)
     eventCategorys = list(items)
     data=eventCategorys[0]
-    pdf_filename = "EventSchedule.pdf"
     query=f"SELECT *  FROM c WHERE c.EventId = '{competition_id}' "
     subject = (data.get('eventTitle', '') + '|' +
            data.get('eventDateString', '') + '|' +
@@ -1232,7 +1242,8 @@ def send_email_with_pdf():
                 emails.append(team['DirectorName']['email'])
     # Remove empty strings (if any) and duplicates
     emails = list(filter(None, set(emails)))
-    recipient = ', '.join(emails)
+    recipient = ','.join(emails)
+    recipient=recipient.split(",")
     query = f"SELECT * FROM c WHERE c.EventId = '{competition_id}'"
     eventOrder_document = list(Ordercontainer.query_items(query=query, enable_cross_partition_query=True))
     #create_pdf(pdf_filename, data,eventOrder_document[0])
@@ -1255,25 +1266,29 @@ def send_email_with_pdf():
         tagData['orderTags']  = orderTags
         firsthtml = firsthtml+format_html_content(html_content, tagData)
     firsthtml=firsthtml+read_html_content("EventScheduleEnd.html")
-    try:
-        # Create the email message
-        msg = MIMEMultipart()
-        msg['From'] = OUTLOOK_USER
-        msg['To'] = recipient
-        msg['Subject'] = subject
-        msg.attach(MIMEText(firsthtml, 'html'))
+    for entry in recipient:
+        try:
+            # Create the email message
+            msg = MIMEMultipart()
+            msg['From'] = OUTLOOK_USER
+            msg['To'] = entry
+            msg['Subject'] = subject
+            layout = read_html_content("scorecardLayout.html")
+            emailContent={'mailContent':firsthtml}
+            html_content = format_html_content(layout, emailContent)
+            msg.attach(MIMEText(html_content, 'html'))
 
 
-        # Connect to Gmail's SMTP server
-        with smtplib.SMTP('smtp.office365.com', 587) as server:
-            server.starttls()  # Upgrade the connection to secure
-            server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
-            server.sendmail(OUTLOOK_USER, recipient, msg.as_string())
-        # Clean up
-        os.remove(pdf_filename)
-        return jsonify({'message': 'Email sent successfully with PDF attachment'})
-    except Exception as e:
-        return jsonify({'error': str(e)})
+            # Connect to Gmail's SMTP server
+            with smtplib.SMTP('smtp.office365.com', 587) as server:
+                server.starttls()  # Upgrade the connection to secure
+                server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
+                server.sendmail(OUTLOOK_USER, entry, msg.as_string())
+            # Clean up
+        except Exception as e:
+            print( jsonify({'error': str(e)}))
+    return jsonify({'message': 'Email sent successfully with PDF attachment'})
+        
 if __name__ == "__main__":
     app.run(host="0.0.0.0",port=5001)
 

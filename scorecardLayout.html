@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    /* Basic reset for the email layout */
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f5f5f5;
+      font-family: Arial, sans-serif;
+    }
+
+    /* Container for the email with a thick black border */
+    .email-container {
+      max-width: 600px;
+      margin: 20px auto;
+      background-color: #E2E2F8;
+      border: 5px solid black;
+      /* Thick black border around */
+      border-bottom: 20px solid black;
+      /* Thicker bottom border */
+      border-radius: 20px;
+      /* Curved corners */
+      padding: 20px;
+      text-align: center;
+      position: relative;
+    }
+
+    /* Style for the content inside the container */
+    .content {
+      font-size: 16px;
+      color: #333;
+    }
+
+    /* Style for the checkmark icon (tick) */
+    .checkmark {
+      font-size: 48px;
+      color: green;
+      margin-bottom: 20px;
+    }
+
+    /* Style for the heading */
+    h1 {
+      font-size: 24px;
+      color: black;
+      margin-bottom: 10px;
+    }
+
+    /* Style for the paragraph */
+    p {
+      margin: 0;
+      color: #666;
+    }
+
+    .footer {
+      text-align: center;
+      font-size: 14px;
+      color: #666;
+      padding-top: 20px;
+    }
+
+    /* Bottom border image inside the container */
+    .bottom-image-container {
+      position: relative;
+      bottom: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100%;
+      height: 100%;
+    }
+
+    .bottom-image-container img {
+      width: 100%;
+      /* Image width matches container */
+      height: 100%;
+      object-fit: cover;
+      /* Ensure the image fits inside the container */
+    }
+  </style>
+</head>
+
+<body>
+  <div class="email-container">
+    <!-- Bottom image inside the container -->
+    <div class="bottom-image-container">
+      <img src="https://scorecardgen.blob.core.windows.net/titleimages/fec8928d-9ac9-468a-b18d-cd3de0125c4a?se=2124-08-23T02%3A11%3A31Z&sp=r&sv=2024-05-04&sr=b&sig=uPqaT1GE8mrECri9FWPR%2B8512zLcupnpgaD2VEhUtGs%3D" alt="Bottom Image">
+    </div>
+      {{mailContent}}
+    <div class="footer">
+      <p>&copy; 2024 S3 Productions LLC. All rights reserved.</p>
+
+    </div>
+  </div>
+</body>
+
+</html>
