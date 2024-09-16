@@ -78,7 +78,7 @@ def upload():
         if file.filename == '':
             return jsonify({'error': 'No selected file'})
         ImageUrl=upload_image(file)
-        if(request.form['EventId']=='Banner'):
+        if(request.form['EventType']=='Banner'):
             saveBannerUrls(ImageUrl,request.form['EventId'])
         return ImageUrl
     except Exception as e:
@@ -599,6 +599,10 @@ def delete_competition():
         return jsonify({"error": "Competition not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+def get_category_entry(scorecardMeta, category_name):
+    return next((entry for entry in scorecardMeta if entry['category'] == category_name), None)
+
 def add_scorecard(data):
     competition_id = data.get('EventId')
 
@@ -628,11 +632,9 @@ def add_scorecard(data):
                 for team in data.get('teamsInfo', []):
                     team_id = team.get('teamName', {}).get('id')
                     team_name = team.get('teamName', {}).get('name')
-
                     # Initialize scorecard with dynamic fields based on scorecardMeta
-                    scorecard = {item['name']: 0 for item in eventScoreCardMeta}
+                    scorecard = {param['name']: 0 for param in get_category_entry(eventScoreCardMeta,category).get('parameters', [])}
                     scorecard['total'] = 0  # Initialize total score
-
                     # Create initial scorecard document
                     scorecard_document = {
                         'id': generate_unique_id(),
