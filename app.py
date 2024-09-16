@@ -78,21 +78,71 @@ def upload():
         if file.filename == '':
             return jsonify({'error': 'No selected file'})
         ImageUrl=upload_image(file)
-        if(request.form.__contains__("EventType")):
-            insertBannerMeta(ImageUrl)
+        if(request.form['EventId']=='Banner'):
+            saveBannerUrls(ImageUrl,request.form['EventId'])
         return ImageUrl
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+def saveBannerUrls(ImageUrl, BannerId):
+    # Create a dictionary to hold the data
+    data = {}
+    
+    # Populate the dictionary with the provided data
+    data["id"] = generate_unique_id()  # Generate a unique id
+    data["BannerId"] = BannerId
+    data["imageUrl"] = ImageUrl
+    data["CreationDateTimeStamp"] = datetime.now().isoformat()  # Capture the current timestamp
+    
+    # Get the container client for the 'BannerImgUrls' container
+    container = database.get_container_client("BannerImgUrls")
+    
+    # Insert the data into the container (Create an item)
+    try:
+        container.create_item(body=data)
+        print(f"Item with id {data['id']} created successfully!")
+    except Exception as e:
+        print(f"An error occurred: {e}")
 
-def insertBannerMeta(imageUrl):
-    container = database.get_container_client("BannerImgUrls")   
-    data={
-        'imageUrl':imageUrl,
-        'BannerId':generate_unique_id,
-        'id':generate_unique_id
-    }
-    new_item = container.create_item(body=data)
+@app.route('/getBanners', methods=['GET'])
+def get_banner():
+    try:
+        # Get the container client inside the function
+        container = database.get_container_client("BannerImgUrls")
+        
+        # Query to get all items from the container
+        banners = list(container.read_all_items())
+        
+        # Return the data as JSON
+        return jsonify(banners), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500      
+@app.route('/removeBanner', methods=['POST'])
+def remove_banner():
+    try:
+        # Get the container client
+        container = database.get_container_client("BannerImgUrls")
+        
+        # Get the BannerId from the POST request body
+        data = request.get_json()
+        banner_id = data.get("BannerId")
+        
+        if not banner_id:
+            return jsonify({"error": "BannerId is required"}), 400
 
+        # Query to find the item based on the BannerId
+        query = f"SELECT * FROM c WHERE c.BannerId = '{banner_id}'"
+        items = list(container.query_items(query=query, enable_cross_partition_query=True))
+        
+        if not items:
+            return jsonify({"error": "Banner not found"}), 404
+
+        # Delete the item(s) based on BannerId
+        for item in items:
+            container.delete_item(item, partition_key=item['id'])
+
+        return jsonify({"message": f"Banner with BannerId {banner_id} deleted successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500  
 
 @app.route('/image/<filename>', methods=['GET'])
 def get_image_route(filename):
@@ -1222,6 +1272,6 @@ def send_email_with_pdf():
     except Exception as e:
         return jsonify({'error': str(e)})
 if __name__ == "__main__":
-    app.run(host="0.0.0.0")
+    app.run(host="0.0.0.0",port=5001)
 
 
