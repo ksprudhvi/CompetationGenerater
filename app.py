@@ -78,8 +78,9 @@ def upload():
         if file.filename == '':
             return jsonify({'error': 'No selected file'})
         ImageUrl=upload_image(file)
+        ImageUrl=ImageUrl.json
         if(request.form['EventType']=='Banner'):
-            saveBannerUrls(ImageUrl,request.form['EventId'])
+            saveBannerUrls(ImageUrl['ImageUrl'],request.form['EventId'])
         return ImageUrl
     except Exception as e:
         return jsonify({"error": str(e)}), 500
