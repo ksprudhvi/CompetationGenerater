@@ -20,6 +20,13 @@ from reportlab.lib.units import inch
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from msal import ConfidentialClientApplication
+import requests
+from flask import Flask, request, jsonify
+import json
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from datetime import datetime
 
 
 app = Flask(__name__)
@@ -34,7 +41,7 @@ DATABASE_NAME = config.settings['competitionDB']
 client = CosmosClient(COSMOS_ENDPOINT, credential=COSMOS_KEY)
 database = client.get_database_client(DATABASE_NAME)
 
-BlobConnection_string = "DefaultEndpointsProtocol=https;AccountName=scorecardgen;AccountKey=09fO4n7Nko8mjcAamRJzbXgbJBZAxmXC5/pkjn+m+0n1grVbnQVGMOh9kUMi1Oth4spfo2bZCD3l+AStpCbUgA==;EndpointSuffix=core.windows.net"
+BlobConnection_string = "DefaultEndpointsProtocol=https;AccountName=unteventmanagmentstorage;AccountKey=k7UfK0LTeup3KP+afYAbsec+O7fG0xRMYl3kEl7kUgGq2nL5RSXDOsahxrVJfS0ckcwmQivnhmRG+AStwQeVpg==;EndpointSuffix=core.windows.net"
 BlobContainer_name = "titleimages"
 
 # Create a BlobServiceClient object
@@ -372,39 +379,63 @@ def generate_code(length=6):
 # Example usage
 print(generate_code(6))  # Generates a 6-character random code
 
+CLIENT_ID = 'd7b1ed96-6e95-4354-af2a-544869f09e55'
+CLIENT_SECRET = 'cfc8Q~2epL9FdAtlvwCEjwCmvrsJ-dDVKSj1Zclo'
+TENANT_ID = 'eccdeba0-716d-4614-9824-ff4754cf84a9'
+AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
+SCOPE = ["https://graph.microsoft.com/.default"]
+
+
+
+# MSAL client instance
+app_msal = ConfidentialClientApplication(
+    CLIENT_ID,
+    authority=AUTHORITY,
+    client_credential=CLIENT_SECRET
+)
+
+GMAIL_USER = 'kprudhvi25@gmail.com'
+GMAIL_APP_PASSWORD = 'flxb hyoj yygb bvdz'
+
 @app.route('/SentOtp', methods=['POST'])
 def SentOtp():
-    data=request.json
+    data = request.json
     emails = data['Email']
-    recipient =emails
+    recipient = emails
     subject = 'Email OTP Verification'
     html_content = read_html_content("emailInvite.html")
-    otp=generate_code(6)
-    data=request.json
+    otp = generate_code(6)
+    
+    # Save OTP to the database
     accessTokenContainer = database.get_container_client("OtpMeta")
     otpDoc = {
-        'id':generate_unique_id(),
-        'Email':data['Email'],
-        'Otp':otp,
+        'id': generate_unique_id(),
+        'Email': data['Email'],
+        'Otp': otp,
         'CreationDateTimeStamp': datetime.now().isoformat()
     }
     accessTokenContainer.create_item(body=otpDoc)
+    
+    # Format the email content with OTP
     html_content = format_html_content(html_content, otpDoc)
+    layout = read_html_content("scorecardLayout.html")
+    emailContent = {'mailContent': html_content}
+    html_content = format_html_content(layout, emailContent)
+
     try:
         # Create the email message
         msg = MIMEMultipart()
-        msg['From'] = OUTLOOK_USER
+        msg['From'] = GMAIL_USER
         msg['To'] = recipient
         msg['Subject'] = subject
-        layout = read_html_content("scorecardLayout.html")
-        emailContent={'mailContent':html_content}
-        html_content = format_html_content(layout, emailContent)
         msg.attach(MIMEText(html_content, 'html'))
+        
         # Connect to Gmail's SMTP server
-        with smtplib.SMTP('smtp.office365.com', 587) as server:
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
             server.starttls()  # Upgrade the connection to secure
-            server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
-            server.sendmail(OUTLOOK_USER, recipient, msg.as_string())
+            server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+            server.sendmail(GMAIL_USER, recipient, msg.as_string())
+        
         return jsonify({'message': 'Email sent successfully'})
     except Exception as e:
         return jsonify({'error': str(e)})
@@ -487,11 +518,11 @@ def authLoginDetails():
             validationQuery = f"SELECT * FROM c WHERE c.Email = '{data['Email']}'"
             access=list(accessTokenContainer.query_items(query=validationQuery, enable_cross_partition_query=True))
             if(len(access)>0):
-                result={'validation':'true','HostAccess':'true','HostId':access[0]['HostId'],'OwnerAccess':'true' if data['Email'] == 's3productionsllc@outlook.com' else 'false'}
+                result={'validation':'true','HostAccess':'true','HostId':access[0]['HostId'],'OwnerAccess':'true' if data['Email'] == 'nandhashriramsabbina@outlook.com' else 'false'}
             else:
-                result={'validation':'true','HostAccess':'false','OwnerAccess':'true' if data['Email'] == 's3productionsllc@outlook.com' else 'false'}    
+                result={'validation':'true','HostAccess':'false','OwnerAccess':'true' if data['Email'] == 'nandhashriramsabbina@outlook.com' else 'false'}    
         else:
-            result={'validation':'false','HostAccess':'false','OwnerAccess':'true' if data['Email'] == 's3productionsllc@outlook.com' else 'false'}
+            result={'validation':'false','HostAccess':'false','OwnerAccess':'true' if data['Email'] == 'nandhashriramsabbina@outlook.com' else 'false'}
         return jsonify(result), 200
         # Insert scorecard document into container
     except Exception as e:
@@ -613,7 +644,7 @@ def add_scorecard(data):
     # Initialize Cosmos Client
     container = database.get_container_client("EventMeta")
     query = f"SELECT c.eventCategory, c.scorecardMeta FROM c WHERE c.EventId = '{competition_id}'"
-    
+
     try:
         # Fetch event category and scorecard meta
         items = container.query_items(query=query, enable_cross_partition_query=True)
@@ -636,9 +667,19 @@ def add_scorecard(data):
                 for team in data.get('teamsInfo', []):
                     team_id = team.get('teamName', {}).get('id')
                     team_name = team.get('teamName', {}).get('name')
+
+                    # Check for existing scorecard
+                    unique_query = f"SELECT c.id FROM c WHERE c.EventId = '{data['EventId']}' AND c.judgeId = '{judge_id}' AND c.teamId = '{team_id}' AND c.category = '{category}'"
+                    existing_entries = list(scorecard_container.query_items(query=unique_query, enable_cross_partition_query=True))
+
+                    if existing_entries:
+                        # Skip creating the entry if it already exists
+                        continue
+
                     # Initialize scorecard with dynamic fields based on scorecardMeta
-                    scorecard = {param['name']: 0 for param in get_category_entry(eventScoreCardMeta,category).get('parameters', [])}
+                    scorecard = {param['name']: 0 for param in get_category_entry(eventScoreCardMeta, category).get('parameters', [])}
                     scorecard['total'] = 0  # Initialize total score
+
                     # Create initial scorecard document
                     scorecard_document = {
                         'id': generate_unique_id(),
@@ -653,6 +694,7 @@ def add_scorecard(data):
                         'comments': '',
                         'CreationDateTimeStamp': datetime.now().isoformat()
                     }
+
                     # Insert scorecard document into container
                     try:
                         scorecard_container.create_item(body=scorecard_document)
@@ -663,6 +705,7 @@ def add_scorecard(data):
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
 @app.route('/update_scores', methods=['POST'])
 def update_scores():
     try:
@@ -791,8 +834,8 @@ def get_leaderboard():
         return jsonify({"error": str(e)}), 500
 
 
-OUTLOOK_USER='s3productionsllc@outlook.com'
-OUTLOOK_PASSWORD='umxvtipvvhgqjwls'  # Use App Password if 2-Step Verification is enabled
+OUTLOOK_USER='nandhashriramsabbina@outlook.com'
+OUTLOOK_PASSWORD='eakwnysdkybugfuh'  # Use App Password if 2-Step Verification is enabled
 def read_html_content(file_path):
     with open(file_path, 'r') as file:
         return file.read()
@@ -811,7 +854,7 @@ def send_email():
     try:
         # Create the email message
         msg = MIMEMultipart()
-        msg['From'] = OUTLOOK_USER
+        msg['From'] = GMAIL_USER
         msg['To'] = recipient
         msg['Subject'] = subject
         layout = read_html_content("scorecardLayout.html")
@@ -819,10 +862,10 @@ def send_email():
         html_content = format_html_content(layout, emailContent)
         msg.attach(MIMEText(html_content, 'html'))
         # Connect to Gmail's SMTP server
-        with smtplib.SMTP('smtp.office365.com', 587) as server:
+        with smtplib.SMTP('smtp.gmail.com', 587) as server:
             server.starttls()  # Upgrade the connection to secure
-            server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
-            server.sendmail(OUTLOOK_USER, recipient, msg.as_string())
+            server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+            server.sendmail(GMAIL_USER, recipient, msg.as_string())
     except Exception as e:
             print( jsonify({'error': str(e)}))
     return jsonify({'message': 'Email sent successfully with PDF attachment'})
@@ -879,7 +922,7 @@ def sendScoreCardsemail():
             try:
                 # Create the email message
                 msg = MIMEMultipart()
-                msg['From'] = OUTLOOK_USER
+                msg['From'] = GMAIL_USER
                 msg['To'] = entry
                 msg['Subject'] = subject
                 layout = read_html_content("scorecardLayout.html")
@@ -892,10 +935,10 @@ def sendScoreCardsemail():
                     pdf_attachment.add_header('Content-Disposition', 'attachment', filename=pdf_filename)
                     msg.attach(pdf_attachment)
                 # Connect to Gmail's SMTP server
-                with smtplib.SMTP('smtp.office365.com', 587) as server:
+                with smtplib.SMTP('smtp.gmail.com', 587) as server:
                     server.starttls()  # Upgrade the connection to secure
-                    server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
-                    server.sendmail(OUTLOOK_USER, entry, msg.as_string())
+                    server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                    server.sendmail(GMAIL_USER, recipient, msg.as_string())
             except Exception as e:
                 return jsonify({'error': str(e)})
     return jsonify({'message': "success"})
@@ -1270,7 +1313,7 @@ def send_email_with_pdf():
         try:
             # Create the email message
             msg = MIMEMultipart()
-            msg['From'] = OUTLOOK_USER
+            msg['From'] = GMAIL_USER
             msg['To'] = entry
             msg['Subject'] = subject
             layout = read_html_content("scorecardLayout.html")
@@ -1280,10 +1323,10 @@ def send_email_with_pdf():
 
 
             # Connect to Gmail's SMTP server
-            with smtplib.SMTP('smtp.office365.com', 587) as server:
+            with smtplib.SMTP('smtp.gmail.com', 587) as server:
                 server.starttls()  # Upgrade the connection to secure
-                server.login(OUTLOOK_USER, OUTLOOK_PASSWORD)
-                server.sendmail(OUTLOOK_USER, entry, msg.as_string())
+                server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+                server.sendmail(GMAIL_USER, recipient, msg.as_string())
             # Clean up
         except Exception as e:
             print( jsonify({'error': str(e)}))
