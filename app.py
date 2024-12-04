@@ -394,8 +394,8 @@ app_msal = ConfidentialClientApplication(
     client_credential=CLIENT_SECRET
 )
 
-GMAIL_USER = 'kprudhvi25@gmail.com'
-GMAIL_APP_PASSWORD = 'flxb hyoj yygb bvdz'
+GMAIL_USER = 'nandhasriramsabbina@gmail.com'
+GMAIL_APP_PASSWORD = 'fngm ypaw glfo tgvo'
 
 @app.route('/SentOtp', methods=['POST'])
 def SentOtp():
