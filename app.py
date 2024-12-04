@@ -373,20 +373,8 @@ def generate_code(length=6):
 # Example usage
 print(generate_code(6))  # Generates a 6-character random code
 
-CLIENT_ID = 'd7b1ed96-6e95-4354-af2a-544869f09e55'
-CLIENT_SECRET = 'cfc8Q~2epL9FdAtlvwCEjwCmvrsJ-dDVKSj1Zclo'
-TENANT_ID = 'eccdeba0-716d-4614-9824-ff4754cf84a9'
-AUTHORITY = f"https://login.microsoftonline.com/{TENANT_ID}"
-SCOPE = ["https://graph.microsoft.com/.default"]
 
 
-
-# MSAL client instance
-app_msal = ConfidentialClientApplication(
-    CLIENT_ID,
-    authority=AUTHORITY,
-    client_credential=CLIENT_SECRET
-)
 
 GMAIL_USER = 'kprudhvi25@gmail.com'
 GMAIL_APP_PASSWORD = 'avxk nhcn yqtu eznf'
